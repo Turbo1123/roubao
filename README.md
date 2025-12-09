@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="src/branch/main/README_EN.md">English</a> | 简体中文
+  <a href="README_EN.md">English</a> | 简体中文
 </p>
 
 <p align="center">
