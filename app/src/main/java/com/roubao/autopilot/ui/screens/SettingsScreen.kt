@@ -1,6 +1,10 @@
 package com.roubao.autopilot.ui.screens
 
-import androidx.compose.animation.*
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +25,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,8 +42,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
-import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
+import com.roubao.autopilot.data.ProviderConfig
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
@@ -46,25 +51,27 @@ import com.roubao.autopilot.utils.CrashHandler
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
-    onUpdateApiKey: (String) -> Unit,
-    onUpdateBaseUrl: (String) -> Unit,
-    onUpdateModel: (String) -> Unit,
-    onAddCustomModel: (String) -> Unit,
-    onRemoveCustomModel: (String) -> Unit,
+    onAddProvider: (String, String, String) -> Unit,
+    onUpdateProvider: (String, String, String, String) -> Unit,
+    onRemoveProvider: (String) -> Unit,
+    onSelectProvider: (String) -> Unit,
+    onAddModelsToProvider: (String, List<String>) -> Unit,
+    onRemoveModelFromProvider: (String, String) -> Unit,
+    onSelectModel: (String) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
-    allModels: List<String>,
-    shizukuAvailable: Boolean
+    shizukuAvailable: Boolean,
+    onFetchModels: ((String, String, (List<String>) -> Unit, (String) -> Unit) -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
-    var showApiKeyDialog by remember { mutableStateOf(false) }
-    var showModelDialog by remember { mutableStateOf(false) }
-    var showAddModelDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMaxStepsDialog by remember { mutableStateOf(false) }
-    var showBaseUrlDialog by remember { mutableStateOf(false) }
+    var showProviderListDialog by remember { mutableStateOf(false) }
+    var showModelSelectDialog by remember { mutableStateOf(false) }
     var showShizukuHelpDialog by remember { mutableStateOf(false) }
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
+
+    val activeProvider = settings.providers.find { it.id == settings.activeProviderId }
 
     LazyColumn(
         modifier = Modifier
@@ -138,64 +145,24 @@ fun SettingsScreen(
             SettingsSection(title = "API 配置")
         }
 
-        // Base URL 设置
+        // API 服务商
         item {
             SettingsItem(
                 icon = Icons.Default.Settings,
                 title = "API 服务商",
-                subtitle = ApiProvider.ALL.find { it.baseUrl == settings.baseUrl }?.name ?: "自定义",
-                onClick = { showBaseUrlDialog = true }
-            ) {
-                ProviderSelector(
-                    currentUrl = settings.baseUrl,
-                    onSelect = { onUpdateBaseUrl(it.baseUrl) },
-                    onCustomClick = { showBaseUrlDialog = true }
-                )
-            }
-        }
-
-        // 模型设置
-        item {
-            SettingsItem(
-                icon = Icons.Default.Build,
-                title = "模型",
-                subtitle = settings.model,
-                onClick = { showModelDialog = true }
+                subtitle = activeProvider?.name ?: "未选择",
+                onClick = { showProviderListDialog = true }
             )
         }
 
-        // API Key 设置
-        item {
-            SettingsItem(
-                icon = Icons.Default.Lock,
-                title = "API Key",
-                subtitle = if (settings.apiKey.isNotEmpty()) "已设置 (${maskApiKey(settings.apiKey)})" else "未设置",
-                onClick = { showApiKeyDialog = true }
-            )
-        }
-
-        // 自定义模型管理
-        item {
-            SettingsSection(title = "自定义模型")
-        }
-
-        item {
-            SettingsItem(
-                icon = Icons.Default.Add,
-                title = "添加自定义模型",
-                subtitle = "添加其他支持的模型",
-                onClick = { showAddModelDialog = true }
-            )
-        }
-
-        // 显示已添加的自定义模型
-        settings.customModels.forEach { model ->
+        // 模型选择 (仅当有 active provider 时显示)
+        if (activeProvider != null) {
             item {
-                CustomModelItem(
-                    model = model,
-                    isSelected = model == settings.model,
-                    onSelect = { onUpdateModel(model) },
-                    onDelete = { onRemoveCustomModel(model) }
+                SettingsItem(
+                    icon = Icons.Default.Build,
+                    title = "模型",
+                    subtitle = settings.model.ifEmpty { "未选择" },
+                    onClick = { showModelSelectDialog = true }
                 )
             }
         }
@@ -330,50 +297,34 @@ fun SettingsScreen(
         )
     }
 
-    // API Key 编辑对话框
-    if (showApiKeyDialog) {
-        ApiKeyDialog(
-            currentKey = settings.apiKey,
-            onDismiss = { showApiKeyDialog = false },
-            onConfirm = {
-                onUpdateApiKey(it)
-                showApiKeyDialog = false
-            }
+    // 服务商列表对话框
+    if (showProviderListDialog) {
+        ProviderListDialog(
+            providers = settings.providers,
+            activeProviderId = settings.activeProviderId,
+            onDismiss = { showProviderListDialog = false },
+            onSelect = {
+                onSelectProvider(it)
+                showProviderListDialog = false
+            },
+            onAdd = onAddProvider,
+            onUpdate = onUpdateProvider,
+            onRemove = onRemoveProvider,
+            onAddModels = onAddModelsToProvider,
+            onRemoveModel = onRemoveModelFromProvider,
+            onFetchModels = onFetchModels
         )
     }
 
     // 模型选择对话框
-    if (showModelDialog) {
+    if (showModelSelectDialog && activeProvider != null) {
         ModelSelectDialog(
             currentModel = settings.model,
-            models = allModels,
-            onDismiss = { showModelDialog = false },
+            models = activeProvider.models,
+            onDismiss = { showModelSelectDialog = false },
             onSelect = {
-                onUpdateModel(it)
-                showModelDialog = false
-            }
-        )
-    }
-
-    // 添加自定义模型对话框
-    if (showAddModelDialog) {
-        AddModelDialog(
-            onDismiss = { showAddModelDialog = false },
-            onConfirm = {
-                onAddCustomModel(it)
-                showAddModelDialog = false
-            }
-        )
-    }
-
-    // 自定义 Base URL 对话框
-    if (showBaseUrlDialog) {
-        BaseUrlDialog(
-            currentUrl = settings.baseUrl,
-            onDismiss = { showBaseUrlDialog = false },
-            onConfirm = {
-                onUpdateBaseUrl(it)
-                showBaseUrlDialog = false
+                onSelectModel(it)
+                showModelSelectDialog = false
             }
         )
     }
@@ -387,6 +338,591 @@ fun SettingsScreen(
     if (showOverlayHelpDialog) {
         OverlayHelpDialog(onDismiss = { showOverlayHelpDialog = false })
     }
+}
+
+@Composable
+fun ProviderListDialog(
+    providers: List<ProviderConfig>,
+    activeProviderId: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onAdd: (String, String, String) -> Unit,
+    onUpdate: (String, String, String, String) -> Unit,
+    onRemove: (String) -> Unit,
+    onAddModels: (String, List<String>) -> Unit,
+    onRemoveModel: (String, String) -> Unit,
+    onFetchModels: ((String, String, (List<String>) -> Unit, (String) -> Unit) -> Unit)? = null
+) {
+    val colors = BaoziTheme.colors
+    var showEditDialog by remember { mutableStateOf(false) }
+    var editingProviderId by remember { mutableStateOf<String?>(null) }
+    val editingProvider = remember(providers, editingProviderId) {
+        if (editingProviderId != null) {
+            providers.find { it.id == editingProviderId }
+        } else {
+            null
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("API 服务商", color = colors.textPrimary)
+                IconButton(onClick = {
+                    editingProviderId = null
+                    showEditDialog = true
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "添加", tint = colors.primary)
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                if (providers.isEmpty()) {
+                    Text(
+                        text = "暂无服务商，请点击右上角添加",
+                        color = colors.textSecondary,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    providers.forEach { provider ->
+                        val isActive = provider.id == activeProviderId
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { onSelect(provider.id) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isActive) colors.primary.copy(alpha = 0.15f) else Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isActive) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = colors.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .border(2.dp, colors.textHint, CircleShape)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = provider.name,
+                                        fontSize = 14.sp,
+                                        color = if (isActive) colors.primary else colors.textPrimary
+                                    )
+                                    Text(
+                                        text = provider.baseUrl,
+                                        fontSize = 11.sp,
+                                        color = colors.textSecondary,
+                                        maxLines = 1
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    editingProviderId = provider.id
+                                    showEditDialog = true
+                                }) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        tint = colors.textHint,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = colors.textSecondary)
+            }
+        }
+    )
+
+    if (showEditDialog) {
+        // 使用局部不可变引用以便 smart cast
+        val providerToEdit = editingProvider
+        ProviderEditDialog(
+            provider = providerToEdit,
+            onDismiss = { showEditDialog = false },
+            onConfirm = { name, url, key ->
+                if (providerToEdit == null) {
+                    onAdd(name, url, key)
+                } else {
+                    onUpdate(providerToEdit.id, name, url, key)
+                }
+                showEditDialog = false
+            },
+            onDelete = providerToEdit?.let { provider ->
+                {
+                    onRemove(provider.id)
+                    showEditDialog = false
+                }
+            },
+            onAddModels = providerToEdit?.let { provider ->
+                { models -> onAddModels(provider.id, models) }
+            },
+            onRemoveModel = providerToEdit?.let { provider ->
+                { model -> onRemoveModel(provider.id, model) }
+            },
+            onFetchModels = onFetchModels
+        )
+    }
+}
+
+@Composable
+fun ProviderEditDialog(
+    provider: ProviderConfig?,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String) -> Unit,
+    onDelete: (() -> Unit)?,
+    onAddModels: ((List<String>) -> Unit)?,
+    onRemoveModel: ((String) -> Unit)?,
+    onFetchModels: ((String, String, (List<String>) -> Unit, (String) -> Unit) -> Unit)? = null
+) {
+    val colors = BaoziTheme.colors
+    var name by remember { mutableStateOf(provider?.name ?: "") }
+    var url by remember { mutableStateOf(provider?.baseUrl ?: "") }
+    var key by remember { mutableStateOf(provider?.apiKey ?: "") }
+    var showKey by remember { mutableStateOf(false) }
+    var showModelManager by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text(if (provider == null) "添加服务商" else "编辑服务商", color = colors.textPrimary)
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                // Name
+                Text("名称", fontSize = 12.sp, color = colors.textHint, modifier = Modifier.padding(bottom = 4.dp))
+                BasicTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    cursorBrush = SolidColor(colors.primary),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.backgroundInput)
+                        .padding(12.dp),
+                    singleLine = true
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // URL
+                Text("Base URL", fontSize = 12.sp, color = colors.textHint, modifier = Modifier.padding(bottom = 4.dp))
+                BasicTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                    cursorBrush = SolidColor(colors.primary),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.backgroundInput)
+                        .padding(12.dp),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Key
+                Text("API Key", fontSize = 12.sp, color = colors.textHint, modifier = Modifier.padding(bottom = 4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BasicTextField(
+                            value = key,
+                            onValueChange = { key = it },
+                            textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                            cursorBrush = SolidColor(colors.primary),
+                            visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(8.dp),
+                            singleLine = true
+                        )
+                        IconButton(onClick = { showKey = !showKey }) {
+                            Icon(
+                                if (showKey) Icons.Default.Close else Icons.Default.Lock, // 简化图标
+                                contentDescription = null,
+                                tint = colors.textHint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (provider != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showModelManager = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.backgroundInput),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("管理模型 (${provider.models.size})", color = colors.textPrimary)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                if (onDelete != null) {
+                    TextButton(onClick = onDelete) {
+                        Text("删除", color = colors.error)
+                    }
+                }
+                TextButton(
+                    onClick = { if (name.isNotBlank() && url.isNotBlank()) onConfirm(name, url, key) },
+                    enabled = name.isNotBlank() && url.isNotBlank()
+                ) {
+                    Text("保存", color = if (name.isNotBlank() && url.isNotBlank()) colors.primary else colors.textHint)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+
+    if (showModelManager && provider != null && onAddModels != null && onRemoveModel != null) {
+        ModelManagerDialog(
+            models = provider.models,
+            onDismiss = { showModelManager = false },
+            onAddModels = onAddModels,
+            onRemove = onRemoveModel,
+            onFetchModels = if (onFetchModels != null) {
+                { onSuccess, onError -> onFetchModels(url, key, onSuccess, onError) }
+            } else null
+        )
+    }
+}
+
+@Composable
+fun ModelManagerDialog(
+    models: List<String>,
+    onDismiss: () -> Unit,
+    onAddModels: (List<String>) -> Unit,
+    onRemove: (String) -> Unit,
+    onFetchModels: (( (List<String>) -> Unit, (String) -> Unit ) -> Unit)? = null
+) {
+    val colors = BaoziTheme.colors
+    var newModel by remember { mutableStateOf("") }
+    var isFetching by remember { mutableStateOf(false) }
+    var showFetchDialog by remember { mutableStateOf(false) }
+    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = { Text("管理模型", color = colors.textPrimary) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                // Add Model Input
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                ) {
+                    BasicTextField(
+                        value = newModel,
+                        onValueChange = { newModel = it },
+                        textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(colors.backgroundInput)
+                            .padding(12.dp),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            if (newModel.isEmpty()) {
+                                Text("输入模型名称", color = colors.textHint, fontSize = 14.sp)
+                            }
+                            innerTextField()
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            if (newModel.isNotBlank()) {
+                                onAddModels(listOf(newModel.trim()))
+                                newModel = ""
+                            }
+                        },
+                        enabled = newModel.isNotBlank()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "添加", tint = if (newModel.isNotBlank()) colors.primary else colors.textHint)
+                    }
+                }
+
+                // Fetch Button
+                if (onFetchModels != null) {
+                    Button(
+                        onClick = {
+                            isFetching = true
+                            onFetchModels(
+                                { models ->
+                                    isFetching = false
+                                    fetchedModels = models
+                                    showFetchDialog = true
+                                },
+                                { _ ->
+                                    isFetching = false
+                                    // 这里可以显示 Toast，但 Compose 中需要 Context
+                                }
+                            )
+                        },
+                        enabled = !isFetching,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    ) {
+                        if (isFetching) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("正在获取...", color = Color.White)
+                        } else {
+                            Text("从 API 获取模型列表", color = Color.White)
+                        }
+                    }
+                }
+
+                // Model List
+                if (models.isEmpty()) {
+                    Text("暂无模型", color = colors.textSecondary, fontSize = 14.sp)
+                } else {
+                    models.forEach { model ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(model, color = colors.textPrimary, fontSize = 14.sp)
+                            IconButton(
+                                onClick = { onRemove(model) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "删除", tint = colors.textHint, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Divider(color = colors.backgroundInput, thickness = 0.5.dp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = colors.textSecondary)
+            }
+        }
+    )
+
+    if (showFetchDialog) {
+        FetchedModelsDialog(
+            models = fetchedModels,
+            existingModels = models,
+            onDismiss = { 
+                showFetchDialog = false
+                fetchedModels = emptyList()
+            },
+            onSelect = { selectedModels ->
+                showFetchDialog = false
+                fetchedModels = emptyList()
+                if (onAddModels != null) {
+                    onAddModels(selectedModels)
+                } else {
+                    selectedModels.forEach { onAdd(it) }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun FetchedModelsDialog(
+    models: List<String>,
+    existingModels: List<String>,
+    onDismiss: () -> Unit,
+    onSelect: (List<String>) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val selectedModels = remember { mutableStateListOf<String>() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = { Text("选择要添加的模型", color = colors.textPrimary) },
+        text = {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 300.dp)
+            ) {
+                items(models.size) { index ->
+                    val model = models[index]
+                    val isExisting = existingModels.contains(model)
+                    val isSelected = selectedModels.contains(model)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isExisting) {
+                                if (isSelected) {
+                                    selectedModels.remove(model)
+                                } else {
+                                    selectedModels.add(model)
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = isSelected || isExisting,
+                            onCheckedChange = { checked ->
+                                if (!isExisting) {
+                                    if (checked) selectedModels.add(model) else selectedModels.remove(model)
+                                }
+                            },
+                            enabled = !isExisting,
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = colors.primary,
+                                uncheckedColor = colors.textHint,
+                                disabledCheckedColor = colors.textHint.copy(alpha = 0.5f)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = model,
+                            color = if (isExisting) colors.textHint else colors.textPrimary,
+                            fontSize = 14.sp
+                        )
+                        if (isExisting) {
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text("已添加", color = colors.textHint, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSelect(selectedModels.toList()) },
+                enabled = selectedModels.isNotEmpty()
+            ) {
+                Text("添加 (${selectedModels.size})", color = if (selectedModels.isNotEmpty()) colors.primary else colors.textHint)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+fun ModelSelectDialog(
+    currentModel: String,
+    models: List<String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("选择模型", color = colors.textPrimary)
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (models.isEmpty()) {
+                    Text("该服务商暂无模型，请先在服务商设置中添加模型。", color = colors.textSecondary, fontSize = 14.sp)
+                } else {
+                    models.forEach { model ->
+                        val isSelected = model == currentModel
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { onSelect(model) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = colors.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .border(2.dp, colors.textHint, CircleShape)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = model,
+                                    fontSize = 14.sp,
+                                    color = if (isSelected) colors.primary else colors.textPrimary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = colors.textSecondary)
+            }
+        }
+    )
 }
 
 @Composable
@@ -510,109 +1046,6 @@ fun SettingsItem(
 }
 
 @Composable
-fun ProviderSelector(
-    currentUrl: String,
-    onSelect: (ApiProvider) -> Unit,
-    onCustomClick: () -> Unit
-) {
-    val colors = BaoziTheme.colors
-    val isCustomUrl = ApiProvider.ALL.none { it.baseUrl == currentUrl }
-
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        ApiProvider.ALL.forEach { provider ->
-            val isSelected = provider.baseUrl == currentUrl
-            Surface(
-                modifier = Modifier.clickable { onSelect(provider) },
-                shape = RoundedCornerShape(8.dp),
-                color = if (isSelected) colors.primary else colors.backgroundInput
-            ) {
-                Text(
-                    text = provider.name.split(" ").first(),
-                    fontSize = 12.sp,
-                    color = if (isSelected) Color.White else colors.textSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
-        // 自定义按钮
-        Surface(
-            modifier = Modifier.clickable { onCustomClick() },
-            shape = RoundedCornerShape(8.dp),
-            color = if (isCustomUrl) colors.primary else colors.backgroundInput
-        ) {
-            Text(
-                text = "自定义",
-                fontSize = 12.sp,
-                color = if (isCustomUrl) Color.White else colors.textSecondary,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun CustomModelItem(
-    model: String,
-    isSelected: Boolean,
-    onSelect: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val colors = BaoziTheme.colors
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable(onClick = onSelect),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) colors.primary.copy(alpha = 0.15f) else colors.backgroundCard
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = colors.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .border(2.dp, colors.textHint, CircleShape)
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = model,
-                fontSize = 14.sp,
-                color = if (isSelected) colors.primary else colors.textPrimary,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = colors.textHint,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun ThemeSelectDialog(
     currentTheme: ThemeMode,
     onDismiss: () -> Unit,
@@ -676,213 +1109,6 @@ fun ThemeSelectDialog(
             }
         }
     )
-}
-
-@Composable
-fun ApiKeyDialog(
-    currentKey: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val colors = BaoziTheme.colors
-    var key by remember { mutableStateOf(currentKey) }
-    var showKey by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.backgroundCard,
-        title = {
-            Text("API Key", color = colors.textPrimary)
-        },
-        text = {
-            Column {
-                Text(
-                    text = "请输入您的 API Key",
-                    fontSize = 14.sp,
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.backgroundInput)
-                        .padding(4.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        BasicTextField(
-                            value = key,
-                            onValueChange = { key = it },
-                            textStyle = TextStyle(
-                                color = colors.textPrimary,
-                                fontSize = 14.sp
-                            ),
-                            cursorBrush = SolidColor(colors.primary),
-                            visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(12.dp)
-                        )
-                        TextButton(onClick = { showKey = !showKey }) {
-                            Text(
-                                text = if (showKey) "隐藏" else "显示",
-                                fontSize = 12.sp,
-                                color = colors.textHint
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(key) }) {
-                Text("确定", color = colors.primary)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = colors.textSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-fun ModelSelectDialog(
-    currentModel: String,
-    models: List<String>,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
-) {
-    val colors = BaoziTheme.colors
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.backgroundCard,
-        title = {
-            Text("选择模型", color = colors.textPrimary)
-        },
-        text = {
-            Column {
-                models.forEach { model ->
-                    val isSelected = model == currentModel
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { onSelect(model) },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = colors.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .border(2.dp, colors.textHint, CircleShape)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = model,
-                                fontSize = 14.sp,
-                                color = if (isSelected) colors.primary else colors.textPrimary
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭", color = colors.textSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-fun AddModelDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val colors = BaoziTheme.colors
-    var modelName by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.backgroundCard,
-        title = {
-            Text("添加自定义模型", color = colors.textPrimary)
-        },
-        text = {
-            Column {
-                Text(
-                    text = "输入模型名称或 ID",
-                    fontSize = 14.sp,
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.backgroundInput)
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                ) {
-                    if (modelName.isEmpty()) {
-                        Text(
-                            text = "例如: gpt-4-vision",
-                            color = colors.textHint,
-                            fontSize = 14.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = modelName,
-                        onValueChange = { modelName = it },
-                        textStyle = TextStyle(
-                            color = colors.textPrimary,
-                            fontSize = 14.sp
-                        ),
-                        cursorBrush = SolidColor(colors.primary),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (modelName.isNotBlank()) onConfirm(modelName.trim()) },
-                enabled = modelName.isNotBlank()
-            ) {
-                Text("添加", color = if (modelName.isNotBlank()) colors.primary else colors.textHint)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = colors.textSecondary)
-            }
-        }
-    )
-}
-
-private fun maskApiKey(key: String): String {
-    return if (key.length > 8) {
-        "${key.take(4)}****${key.takeLast(4)}"
-    } else {
-        "****"
-    }
 }
 
 @Composable
@@ -1176,151 +1402,6 @@ fun MaxStepsDialog(
         confirmButton = {
             TextButton(onClick = { onConfirm(steps.toInt()) }) {
                 Text("确定", color = colors.primary)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = colors.textSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-fun BaseUrlDialog(
-    currentUrl: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val colors = BaoziTheme.colors
-    var url by remember { mutableStateOf(currentUrl) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.backgroundCard,
-        title = {
-            Text("API Base URL", color = colors.textPrimary)
-        },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            ) {
-                Text(
-                    text = "选择预设服务商或输入自定义 URL（支持 OpenAI 兼容接口）",
-                    fontSize = 14.sp,
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                // 预设选项
-                Text(
-                    text = "预设服务商",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.textHint,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                ApiProvider.ALL.forEach { provider ->
-                    val isSelected = provider.baseUrl == url
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { url = provider.baseUrl },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = colors.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(18.dp)
-                                            .border(2.dp, colors.textHint, CircleShape)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = provider.name,
-                                    fontSize = 14.sp,
-                                    color = if (isSelected) colors.primary else colors.textPrimary
-                                )
-                            }
-                            Text(
-                                text = provider.baseUrl,
-                                fontSize = 11.sp,
-                                color = colors.textHint,
-                                modifier = Modifier.padding(start = 28.dp, top = 2.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 自定义 URL 输入
-                Text(
-                    text = "自定义 URL",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.textHint,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.backgroundInput)
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                ) {
-                    if (url.isEmpty()) {
-                        Text(
-                            text = "https://api.openai.com/v1",
-                            color = colors.textHint,
-                            fontSize = 14.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = url,
-                        onValueChange = { url = it },
-                        textStyle = TextStyle(
-                            color = colors.textPrimary,
-                            fontSize = 14.sp
-                        ),
-                        cursorBrush = SolidColor(colors.primary),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-
-                // 常用 URL 提示
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "常用: OpenAI (api.openai.com/v1)、Azure、本地部署等",
-                    fontSize = 11.sp,
-                    color = colors.textHint
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (url.isNotBlank()) onConfirm(url.trim()) },
-                enabled = url.isNotBlank()
-            ) {
-                Text("确定", color = if (url.isNotBlank()) colors.primary else colors.textHint)
             }
         },
         dismissButton = {

@@ -260,15 +260,26 @@ class MainActivity : ComponentActivity() {
                             )
                             Screen.Settings -> SettingsScreen(
                                 settings = settings,
-                                onUpdateApiKey = { settingsManager.updateApiKey(it) },
-                                onUpdateBaseUrl = { settingsManager.updateBaseUrl(it) },
-                                onUpdateModel = { settingsManager.updateModel(it) },
-                                onAddCustomModel = { settingsManager.addCustomModel(it) },
-                                onRemoveCustomModel = { settingsManager.removeCustomModel(it) },
+                                onAddProvider = { name, url, key -> settingsManager.addProvider(name, url, key) },
+                                onUpdateProvider = { id, name, url, key -> settingsManager.updateProvider(id, name, url, key) },
+                                onRemoveProvider = { id -> settingsManager.removeProvider(id) },
+                                onSelectProvider = { id -> settingsManager.setActiveProvider(id) },
+                                onAddModelsToProvider = { providerId, models -> settingsManager.addModelsToProvider(providerId, models) },
+                                onRemoveModelFromProvider = { providerId, model -> settingsManager.removeModelFromProvider(providerId, model) },
+                                onSelectModel = { model -> settingsManager.updateModel(model) },
                                 onUpdateThemeMode = { settingsManager.updateThemeMode(it) },
                                 onUpdateMaxSteps = { settingsManager.updateMaxSteps(it) },
-                                allModels = settingsManager.getAllModels(),
-                                shizukuAvailable = isShizukuAvailable
+                                shizukuAvailable = isShizukuAvailable,
+                                onFetchModels = { url, key, onSuccess, onError ->
+                                    lifecycleScope.launch {
+                                        val result = VLMClient.fetchModels(url, key)
+                                        result.onSuccess { models ->
+                                            onSuccess(models)
+                                        }.onFailure { error ->
+                                            onError(error.message ?: "Unknown error")
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
