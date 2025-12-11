@@ -5,39 +5,31 @@ import android.content.SharedPreferences
 import com.roubao.autopilot.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 
 /**
  * API 提供商配置
  */
-data class ApiProvider(
+data class ProviderConfig(
+    val id: String = UUID.randomUUID().toString(),
     val name: String,
     val baseUrl: String,
-    val defaultModel: String
-) {
-    companion object {
-        val ALIYUN = ApiProvider(
-            name = "阿里云 (Qwen-VL)",
-            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            defaultModel = "qwen3-vl-plus"
-        )
-        val MODELSCOPE = ApiProvider(
-            name = "ModelScope",
-            baseUrl = "https://api-inference.modelscope.cn/v1",
-            defaultModel = "iic/GUI-Owl-7B"
-        )
-
-        val ALL = listOf(ALIYUN, MODELSCOPE)
-    }
-}
+    val apiKey: String,
+    val models: List<String> = emptyList()
+)
 
 /**
  * 应用设置
  */
 data class AppSettings(
-    val apiKey: String = "",
-    val baseUrl: String = ApiProvider.ALIYUN.baseUrl,
-    val model: String = ApiProvider.ALIYUN.defaultModel,
-    val customModels: List<String> = emptyList(),
+    // 当前选中的模型
+    val model: String = "",
+    
+    val providers: List<ProviderConfig> = emptyList(),
+    val activeProviderId: String = "",
+    
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val hasSeenOnboarding: Boolean = false,
     val maxSteps: Int = 25
@@ -54,6 +46,28 @@ class SettingsManager(context: Context) {
     private val _settings = MutableStateFlow(loadSettings())
     val settings: StateFlow<AppSettings> = _settings
 
+    companion object {
+        private const val KEY_PROVIDERS = "providers_json"
+        private const val KEY_ACTIVE_PROVIDER_ID = "active_provider_id"
+        
+        val DEFAULT_PROVIDERS = listOf(
+            ProviderConfig(
+                id = "aliyun",
+                name = "阿里云 (Qwen-VL)",
+                baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                apiKey = "",
+                models = listOf("qwen3-vl-plus", "qwen-vl-max", "qwen-vl-plus")
+            ),
+            ProviderConfig(
+                id = "modelscope",
+                name = "ModelScope",
+                baseUrl = "https://api-inference.modelscope.cn/v1",
+                apiKey = "",
+                models = listOf("iic/GUI-Owl-7B")
+            )
+        )
+    }
+
     private fun loadSettings(): AppSettings {
         val themeModeStr = prefs.getString("theme_mode", ThemeMode.DARK.name) ?: ThemeMode.DARK.name
         val themeMode = try {
@@ -61,61 +75,182 @@ class SettingsManager(context: Context) {
         } catch (e: Exception) {
             ThemeMode.DARK
         }
+
+        // 加载 Providers
+        val providersJson = prefs.getString(KEY_PROVIDERS, null)
+        val providers = if (providersJson != null) {
+            deserializeProviders(providersJson)
+        } else {
+            DEFAULT_PROVIDERS
+        }
+
+        // 加载 Active Provider ID
+        var activeProviderId = prefs.getString(KEY_ACTIVE_PROVIDER_ID, "") ?: ""
+        if (activeProviderId.isEmpty() || providers.none { it.id == activeProviderId }) {
+            activeProviderId = providers.firstOrNull()?.id ?: ""
+        }
+
+        // 获取当前 active provider 的配置
+        val activeProvider = providers.find { it.id == activeProviderId }
+        
+        // 加载当前选中的 model (存储在 prefs 中，key 为 "current_model_{providerId}")
+        val currentModel = if (activeProvider != null) {
+            prefs.getString("current_model_${activeProvider.id}", activeProvider.models.firstOrNull() ?: "") ?: ""
+        } else {
+            ""
+        }
+
         return AppSettings(
-            apiKey = prefs.getString("api_key", AppSettings().apiKey) ?: AppSettings().apiKey,
-            baseUrl = prefs.getString("base_url", AppSettings().baseUrl) ?: AppSettings().baseUrl,
-            model = prefs.getString("model", AppSettings().model) ?: AppSettings().model,
-            customModels = prefs.getStringSet("custom_models", emptySet())?.toList() ?: emptyList(),
+            model = currentModel,
+            providers = providers,
+            activeProviderId = activeProviderId,
             themeMode = themeMode,
             hasSeenOnboarding = prefs.getBoolean("has_seen_onboarding", false),
             maxSteps = prefs.getInt("max_steps", 25)
         )
     }
 
-    fun updateApiKey(apiKey: String) {
-        prefs.edit().putString("api_key", apiKey).apply()
-        _settings.value = _settings.value.copy(apiKey = apiKey)
+    private fun saveProviders(providers: List<ProviderConfig>) {
+        val json = serializeProviders(providers)
+        prefs.edit().putString(KEY_PROVIDERS, json).apply()
     }
 
-    fun updateBaseUrl(baseUrl: String) {
-        prefs.edit().putString("base_url", baseUrl).apply()
-        _settings.value = _settings.value.copy(baseUrl = baseUrl)
+    fun addProvider(name: String, baseUrl: String, apiKey: String) {
+        val newProvider = ProviderConfig(
+            name = name,
+            baseUrl = baseUrl,
+            apiKey = apiKey,
+            models = emptyList()
+        )
+        val newProviders = _settings.value.providers + newProvider
+        saveProviders(newProviders)
+        
+        // 如果是第一个，设为默认
+        if (newProviders.size == 1) {
+            setActiveProvider(newProvider.id)
+        } else {
+            _settings.value = _settings.value.copy(providers = newProviders)
+        }
+    }
+
+    fun updateProvider(id: String, name: String, baseUrl: String, apiKey: String) {
+        val currentProviders = _settings.value.providers
+        val index = currentProviders.indexOfFirst { it.id == id }
+        if (index != -1) {
+            val updatedProvider = currentProviders[index].copy(
+                name = name,
+                baseUrl = baseUrl,
+                apiKey = apiKey
+            )
+            val newProviders = currentProviders.toMutableList().apply {
+                set(index, updatedProvider)
+            }
+            saveProviders(newProviders)
+            
+            // 如果更新的是当前 active provider，需要更新 AppSettings 的顶层字段
+            if (id == _settings.value.activeProviderId) {
+                _settings.value = _settings.value.copy(
+                    providers = newProviders
+                )
+            } else {
+                _settings.value = _settings.value.copy(providers = newProviders)
+            }
+        }
+    }
+
+    fun removeProvider(id: String) {
+        val currentProviders = _settings.value.providers
+        val newProviders = currentProviders.filter { it.id != id }
+        saveProviders(newProviders)
+
+        if (id == _settings.value.activeProviderId) {
+            val nextProvider = newProviders.firstOrNull()
+            if (nextProvider != null) {
+                setActiveProvider(nextProvider.id)
+            } else {
+                _settings.value = _settings.value.copy(
+                    providers = newProviders,
+                    activeProviderId = "",
+                    model = ""
+                )
+                prefs.edit().remove(KEY_ACTIVE_PROVIDER_ID).apply()
+            }
+        } else {
+            _settings.value = _settings.value.copy(providers = newProviders)
+        }
+    }
+
+    fun setActiveProvider(id: String) {
+        val provider = _settings.value.providers.find { it.id == id } ?: return
+        
+        prefs.edit().putString(KEY_ACTIVE_PROVIDER_ID, id).apply()
+        
+        // 加载该 provider 上次选中的 model
+        val savedModel = prefs.getString("current_model_${id}", provider.models.firstOrNull() ?: "") ?: ""
+        
+        _settings.value = _settings.value.copy(
+            activeProviderId = id,
+            model = savedModel
+        )
     }
 
     fun updateModel(model: String) {
-        prefs.edit().putString("model", model).apply()
-        _settings.value = _settings.value.copy(model = model)
+        val activeId = _settings.value.activeProviderId
+        if (activeId.isNotEmpty()) {
+            prefs.edit().putString("current_model_$activeId", model).apply()
+            _settings.value = _settings.value.copy(model = model)
+        }
     }
 
-    fun addCustomModel(model: String) {
-        val newModels = (_settings.value.customModels + model).distinct()
-        prefs.edit().putStringSet("custom_models", newModels.toSet()).apply()
-        _settings.value = _settings.value.copy(customModels = newModels)
-    }
+    fun addModelsToProvider(providerId: String, models: List<String>) {
+        val currentProviders = _settings.value.providers
+        val index = currentProviders.indexOfFirst { it.id == providerId }
+        if (index == -1) return
+        
+        val provider = currentProviders[index]
+        val validModels = models.filter { it.isNotBlank() }
+        if (validModels.isEmpty()) return
 
-    fun removeCustomModel(model: String) {
-        val newModels = _settings.value.customModels - model
-        prefs.edit().putStringSet("custom_models", newModels.toSet()).apply()
-        _settings.value = _settings.value.copy(customModels = newModels)
+        val newModels = (provider.models + validModels).distinct()
+        val updatedProvider = provider.copy(models = newModels)
+        
+        val newProviders = currentProviders.toMutableList().apply {
+            set(index, updatedProvider)
+        }
+        saveProviders(newProviders)
+        
+        _settings.value = if (providerId == _settings.value.activeProviderId) {
+            val modelToSelect = if (_settings.value.model.isEmpty()) validModels.first() else _settings.value.model
+            _settings.value.copy(providers = newProviders, model = modelToSelect)
+        } else {
+            _settings.value.copy(providers = newProviders)
+        }
     }
-
-    fun selectProvider(provider: ApiProvider) {
-        updateBaseUrl(provider.baseUrl)
-        updateModel(provider.defaultModel)
-    }
-
-    fun getCurrentProvider(): ApiProvider? {
-        return ApiProvider.ALL.find { it.baseUrl == _settings.value.baseUrl }
-    }
-
-    fun getAllModels(): List<String> {
-        val builtIn = listOf(
-            "qwen3-vl-plus",
-            "qwen-vl-max",
-            "qwen-vl-plus",
-            "iic/GUI-Owl-7B"
-        )
-        return (builtIn + _settings.value.customModels).distinct()
+    
+    fun removeModelFromProvider(providerId: String, model: String) {
+        val currentProviders = _settings.value.providers
+        val index = currentProviders.indexOfFirst { it.id == providerId }
+        if (index == -1) return
+        
+        val provider = currentProviders[index]
+        val newModels = provider.models - model
+        val updatedProvider = provider.copy(models = newModels)
+        
+        val newProviders = currentProviders.toMutableList().apply {
+            set(index, updatedProvider)
+        }
+        saveProviders(newProviders)
+        
+        _settings.value = if (providerId == _settings.value.activeProviderId) {
+            val nextModel = if (_settings.value.model == model) {
+                newModels.firstOrNull() ?: ""
+            } else {
+                _settings.value.model
+            }
+            _settings.value.copy(providers = newProviders, model = nextModel)
+        } else {
+            _settings.value.copy(providers = newProviders)
+        }
     }
 
     fun updateThemeMode(themeMode: ThemeMode) {
@@ -129,8 +264,55 @@ class SettingsManager(context: Context) {
     }
 
     fun updateMaxSteps(maxSteps: Int) {
-        val validSteps = maxSteps.coerceIn(5, 100) // 限制范围 5-100
+        val validSteps = maxSteps.coerceIn(5, 100)
         prefs.edit().putInt("max_steps", validSteps).apply()
         _settings.value = _settings.value.copy(maxSteps = validSteps)
+    }
+
+    // JSON Serialization Helpers
+    private fun serializeProviders(providers: List<ProviderConfig>): String {
+        val jsonArray = JSONArray()
+        providers.forEach { provider ->
+            val jsonObject = JSONObject()
+            jsonObject.put("id", provider.id)
+            jsonObject.put("name", provider.name)
+            jsonObject.put("baseUrl", provider.baseUrl)
+            jsonObject.put("apiKey", provider.apiKey)
+            
+            val modelsArray = JSONArray()
+            provider.models.forEach { modelsArray.put(it) }
+            jsonObject.put("models", modelsArray)
+            
+            jsonArray.put(jsonObject)
+        }
+        return jsonArray.toString()
+    }
+
+    private fun deserializeProviders(json: String): List<ProviderConfig> {
+        val providers = mutableListOf<ProviderConfig>()
+        try {
+            val jsonArray = JSONArray(json)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val modelsList = mutableListOf<String>()
+                val modelsArray = obj.optJSONArray("models")
+                if (modelsArray != null) {
+                    for (j in 0 until modelsArray.length()) {
+                        modelsList.add(modelsArray.getString(j))
+                    }
+                }
+                
+                providers.add(ProviderConfig(
+                    id = obj.getString("id"),
+                    name = obj.getString("name"),
+                    baseUrl = obj.getString("baseUrl"),
+                    apiKey = obj.getString("apiKey"),
+                    models = modelsList
+                ))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return providers
     }
 }
