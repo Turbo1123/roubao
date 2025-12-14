@@ -47,6 +47,13 @@ Text Related:
             append("No progress yet.\n\n")
         }
 
+        // UI 树上下文（无障碍模式）
+        if (infoPool.accessibilityEnabled && infoPool.uiTreeContext.isNotEmpty()) {
+            append("### UI Elements (Indexed) ###\n")
+            append("The following UI elements are detected. Use 'index' for precise clicking.\n")
+            append("${infoPool.uiTreeContext}\n\n")
+        }
+
         append("### Guidelines ###\n")
         append("$GUIDELINES\n\n")
 
@@ -54,6 +61,17 @@ Text Related:
         append("Examine all information and decide on the next action.\n\n")
 
         append("#### Atomic Actions ####\n")
+
+        // 根据无障碍服务状态显示不同的动作说明
+        if (infoPool.accessibilityEnabled) {
+            append("**INDEX MODE (Recommended)** - Use element index for precise actions:\n")
+            append("- click(index): Click element by index. Example: {\"action\": \"click\", \"index\": 5}\n")
+            append("- long_press(index): Long press element. Example: {\"action\": \"long_press\", \"index\": 3}\n")
+            append("- type(index, text): Type text into element. Example: {\"action\": \"type\", \"index\": 2, \"text\": \"hello\"}\n")
+            append("- scroll(index, direction): Scroll element. Example: {\"action\": \"scroll\", \"index\": 1, \"direction\": \"down\"}\n")
+            append("\n**COORDINATE MODE** - Fallback when index not available:\n")
+        }
+
         append("- click(coordinate): Click at (x, y). Example: {\"action\": \"click\", \"coordinate\": [x, y]}\n")
         append("- double_tap(coordinate): Double tap at (x, y) for zoom or like. Example: {\"action\": \"double_tap\", \"coordinate\": [x, y]}\n")
         append("- long_press(coordinate): Long press at (x, y). Example: {\"action\": \"long_press\", \"coordinate\": [x, y]}\n")
@@ -71,7 +89,11 @@ Text Related:
 
         append("#### Sensitive Operations ####\n")
         append("For payment, password, or privacy-related actions, add 'message' field to request user confirmation:\n")
-        append("Example: {\"action\": \"click\", \"coordinate\": [500, 800], \"message\": \"确认支付 ¥100\"}\n")
+        if (infoPool.accessibilityEnabled) {
+            append("Example: {\"action\": \"click\", \"index\": 5, \"message\": \"确认支付 ¥100\"}\n")
+        } else {
+            append("Example: {\"action\": \"click\", \"coordinate\": [500, 800], \"message\": \"确认支付 ¥100\"}\n")
+        }
         append("The user will see a confirmation dialog and can choose to confirm or cancel.\n")
         append("\n")
 

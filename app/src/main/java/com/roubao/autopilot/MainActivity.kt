@@ -35,6 +35,7 @@ import com.roubao.autopilot.ui.theme.*
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.view.WindowCompat
 import com.roubao.autopilot.vlm.VLMClient
+import com.roubao.autopilot.macro.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import rikka.shizuku.Shizuku
@@ -44,7 +45,7 @@ private const val TAG = "MainActivity"
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector, val selectedIcon: ImageVector) {
     object Home : Screen("home", "肉包", Icons.Outlined.Home, Icons.Filled.Home)
-    object Capabilities : Screen("capabilities", "能力", Icons.Outlined.Star, Icons.Filled.Star)
+    object Macro : Screen("macro", "脚本", Icons.Outlined.PlayArrow, Icons.Filled.PlayArrow)
     object History : Screen("history", "记录", Icons.Outlined.List, Icons.Filled.List)
     object Settings : Screen("settings", "设置", Icons.Outlined.Settings, Icons.Filled.Settings)
 }
@@ -54,8 +55,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceController: DeviceController
     private lateinit var settingsManager: SettingsManager
     private lateinit var executionRepository: ExecutionRepository
+    private lateinit var macroRepository: MacroRepository
+    private var macroPlayer: MacroPlayer? = null
 
     private val mobileAgent = mutableStateOf<MobileAgent?>(null)
+    private val macroList = mutableStateOf<List<MacroScript>>(emptyList())
     private var shizukuAvailable = mutableStateOf(false)
 
     // 当前执行的协程 Job（用于停止任务）
@@ -111,10 +115,13 @@ class MainActivity : ComponentActivity() {
         deviceController.setCacheDir(cacheDir)
         settingsManager = SettingsManager(this)
         executionRepository = ExecutionRepository(this)
+        macroRepository = MacroRepository(this)
+        macroPlayer = MacroPlayer(deviceController)
 
         // 加载执行记录
         lifecycleScope.launch {
             executionRecords.value = executionRepository.getAllRecords()
+            macroList.value = macroRepository.getAllMacros()
         }
 
         // 添加 Shizuku 监听器
@@ -164,6 +171,7 @@ class MainActivity : ComponentActivity() {
     fun MainApp() {
         var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
         var selectedRecord by remember { mutableStateOf<ExecutionRecord?>(null) }
+        var selectedMacro by remember { mutableStateOf<MacroScript?>(null) }
         var showShizukuHelpDialog by remember { mutableStateOf(false) }
         var hasShownShizukuHelp by remember { mutableStateOf(false) }
 
@@ -173,6 +181,8 @@ class MainActivity : ComponentActivity() {
         val agentState by agent?.state?.collectAsState() ?: remember { mutableStateOf(null) }
         val logs by agent?.logs?.collectAsState() ?: remember { mutableStateOf(emptyList<String>()) }
         val records by remember { executionRecords }
+        val macros by remember { macroList }
+        val macroProgress by macroPlayer?.progress?.collectAsState() ?: remember { mutableStateOf(MacroPlayProgress()) }
         val isShizukuAvailable = shizukuAvailable.value && checkShizukuPermission()
         val executing by remember { isExecuting }
         val navigateToRecord by remember { shouldNavigateToRecord }
@@ -203,13 +213,13 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.background(colors.background),
             containerColor = colors.background,
             bottomBar = {
-                if (selectedRecord == null) {
+                if (selectedRecord == null && selectedMacro == null) {
                     NavigationBar(
                         containerColor = colors.background,
                         contentColor = colors.textPrimary,
                         tonalElevation = 0.dp
                     ) {
-                        listOf(Screen.Home, Screen.Capabilities, Screen.History, Screen.Settings).forEach { screen ->
+                        listOf(Screen.Home, Screen.Macro, Screen.History, Screen.Settings).forEach { screen ->
                             val selected = currentScreen == screen
                             NavigationBarItem(
                                 icon = {
@@ -240,12 +250,34 @@ class MainActivity : ComponentActivity() {
                     .padding(padding)
             ) {
                 // 处理系统返回手势
-                BackHandler(enabled = selectedRecord != null) {
-                    selectedRecord = null
+                BackHandler(enabled = selectedRecord != null || selectedMacro != null) {
+                    if (selectedMacro != null) {
+                        selectedMacro = null
+                    } else {
+                        selectedRecord = null
+                    }
                 }
 
                 // 详情页优先显示
-                if (selectedRecord != null) {
+                if (selectedMacro != null) {
+                    MacroDetailScreen(
+                        macro = selectedMacro!!,
+                        onBack = { selectedMacro = null },
+                        onPlay = {
+                            lifecycleScope.launch {
+                                macroPlayer?.play(selectedMacro!!, this)
+                            }
+                        },
+                        onEdit = { updatedMacro ->
+                            lifecycleScope.launch {
+                                macroRepository.saveMacro(updatedMacro)
+                                macroList.value = macroRepository.getAllMacros()
+                                selectedMacro = updatedMacro
+                            }
+                        },
+                        isPlaying = macroProgress.state == MacroPlayState.PLAYING
+                    )
+                } else if (selectedRecord != null) {
                     HistoryDetailScreen(
                         record = selectedRecord!!,
                         onBack = { selectedRecord = null }
@@ -281,7 +313,31 @@ class MainActivity : ComponentActivity() {
                                     isExecuting = executing
                                 )
                             }
-                            Screen.Capabilities -> CapabilitiesScreen()
+                            Screen.Macro -> MacroScreen(
+                                macros = macros,
+                                playProgress = macroProgress,
+                                onMacroClick = { macro -> selectedMacro = macro },
+                                onPlayMacro = { macro ->
+                                    lifecycleScope.launch {
+                                        macroPlayer?.play(macro, this)
+                                    }
+                                },
+                                onPauseMacro = { macroPlayer?.pause() },
+                                onResumeMacro = { macroPlayer?.resume() },
+                                onStopMacro = { macroPlayer?.stop() },
+                                onDeleteMacro = { id ->
+                                    lifecycleScope.launch {
+                                        macroRepository.deleteMacro(id)
+                                        macroList.value = macroRepository.getAllMacros()
+                                    }
+                                },
+                                onDuplicateMacro = { id ->
+                                    lifecycleScope.launch {
+                                        macroRepository.duplicateMacro(id)
+                                        macroList.value = macroRepository.getAllMacros()
+                                    }
+                                }
+                            )
                             Screen.History -> HistoryScreen(
                                 records = records,
                                 onRecordClick = { record -> selectedRecord = record },

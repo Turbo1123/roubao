@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
+import com.roubao.autopilot.accessibility.AccessibilityHelper
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.ui.theme.BaoziTheme
@@ -74,6 +75,11 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
+    var showAccessibilityHelpDialog by remember { mutableStateOf(false) }
+
+    // 无障碍服务状态（动态检测）
+    val context = LocalContext.current
+    var isAccessibilityEnabled by remember { mutableStateOf(AccessibilityHelper.isServiceAvailable()) }
 
     LazyColumn(
         modifier = Modifier
@@ -506,6 +512,82 @@ fun SettingsScreen(
             }
         }
 
+        // 无障碍服务分组
+        item {
+            SettingsSection(title = "高级功能")
+        }
+
+        item {
+            // 刷新状态
+            LaunchedEffect(Unit) {
+                isAccessibilityEnabled = AccessibilityHelper.isServiceAvailable()
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAccessibilityHelpDialog = true }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isAccessibilityEnabled) colors.success.copy(alpha = 0.15f)
+                                else colors.primary.copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = null,
+                            tint = if (isAccessibilityEnabled) colors.success else colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "无障碍服务",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (isAccessibilityEnabled) "已启用 - 使用混合模式（更精准）" else "未启用 - 点击了解详情",
+                            fontSize = 13.sp,
+                            color = if (isAccessibilityEnabled) colors.success else colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    if (isAccessibilityEnabled) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = colors.success,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = colors.textHint,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // 帮助分组
         item {
             SettingsSection(title = "帮助")
@@ -655,6 +737,15 @@ fun SettingsScreen(
                 onUpdateSuCommandEnabled(true)
                 showSuCommandWarningDialog = false
             }
+        )
+    }
+
+    // 无障碍服务帮助对话框
+    if (showAccessibilityHelpDialog) {
+        AccessibilityHelpDialog(
+            isEnabled = isAccessibilityEnabled,
+            onDismiss = { showAccessibilityHelpDialog = false },
+            onRefresh = { isAccessibilityEnabled = AccessibilityHelper.isServiceAvailable() }
         )
     }
 }
@@ -1866,6 +1957,162 @@ fun SuCommandWarningDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+/**
+ * 无障碍服务帮助对话框
+ */
+@Composable
+fun AccessibilityHelpDialog(
+    isEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        icon = {
+            Icon(
+                imageVector = if (isEnabled) Icons.Default.CheckCircle else Icons.Default.Build,
+                contentDescription = null,
+                tint = if (isEnabled) colors.success else colors.primary,
+                modifier = Modifier.size(48.dp)
+            )
+        },
+        title = {
+            Text(
+                text = if (isEnabled) "无障碍服务已启用" else "启用无障碍服务",
+                color = if (isEnabled) colors.success else colors.textPrimary,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                if (isEnabled) {
+                    // 已启用状态
+                    Text(
+                        text = "无障碍服务运行正常！",
+                        fontSize = 14.sp,
+                        color = colors.success,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    Text(
+                        text = "当前模式：混合模式",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "AI 将优先使用无障碍服务进行精准操作，在需要时回退到坐标点击。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary,
+                        lineHeight = 20.sp
+                    )
+                } else {
+                    // 未启用状态 - 说明功能
+                    Text(
+                        text = "无障碍服务可以让 AI 更精准地操作手机",
+                        fontSize = 14.sp,
+                        color = colors.textPrimary,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    Text(
+                        text = "功能优势：",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    BulletPoint("精准点击：通过元素索引定位，不受屏幕变化影响")
+                    BulletPoint("智能输入：直接向输入框注入文字，更快更稳定")
+                    BulletPoint("UI 感知：获取完整界面结构，理解页面内容")
+                    BulletPoint("混合模式：同时支持视觉和结构化操作")
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "如何启用：",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HelpStep(
+                        number = "1",
+                        title = "打开系统设置",
+                        description = "点击下方按钮进入无障碍设置"
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HelpStep(
+                        number = "2",
+                        title = "找到「肉包 Autopilot」",
+                        description = "在已安装的服务列表中找到肉包"
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HelpStep(
+                        number = "3",
+                        title = "开启服务",
+                        description = "点击开关启用无障碍服务"
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "隐私说明：",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "无障碍服务仅在任务执行期间读取界面信息，不会收集、存储或上传任何个人数据。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary,
+                        lineHeight = 20.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (isEnabled) {
+                TextButton(onClick = onDismiss) {
+                    Text("完成", color = colors.primary)
+                }
+            } else {
+                Button(
+                    onClick = {
+                        // 打开无障碍设置
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary)
+                ) {
+                    Text("前往设置", color = Color.White)
+                }
+            }
+        },
+        dismissButton = {
+            if (!isEnabled) {
+                TextButton(onClick = {
+                    onRefresh()
+                }) {
+                    Text("刷新状态", color = colors.textSecondary)
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text("关闭", color = colors.textSecondary)
+                }
             }
         }
     )

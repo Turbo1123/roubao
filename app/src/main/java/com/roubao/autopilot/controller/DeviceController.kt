@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import com.roubao.autopilot.IShellService
+import com.roubao.autopilot.accessibility.AccessibilityHelper
+import com.roubao.autopilot.accessibility.UITree
 import com.roubao.autopilot.service.ShellService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -533,5 +535,128 @@ class DeviceController(private val context: Context? = null) {
      */
     fun openDeepLink(uri: String) {
         exec("am start -a android.intent.action.VIEW -d \"$uri\"")
+    }
+
+    // ==================== 无障碍服务集成 ====================
+
+    /**
+     * 检查无障碍服务是否可用
+     */
+    fun isAccessibilityAvailable(): Boolean {
+        return AccessibilityHelper.isServiceAvailable()
+    }
+
+    /**
+     * 获取当前 UI 树
+     */
+    fun getUITree(forceRefresh: Boolean = true): UITree? {
+        return AccessibilityHelper.getUITree(forceRefresh, onlyInteractive = true)
+    }
+
+    /**
+     * 获取 UI 树的格式化文本（用于 LLM prompt）
+     */
+    fun getUITreeContext(): String {
+        val tree = getUITree() ?: return ""
+        return tree.toFormattedString(onlyInteractive = true)
+    }
+
+    /**
+     * 根据索引点击元素（优先使用无障碍服务）
+     */
+    fun tapByIndex(index: Int): Boolean {
+        return AccessibilityHelper.tapByIndex(index)
+    }
+
+    /**
+     * 根据索引长按元素
+     */
+    fun longPressByIndex(index: Int, duration: Long = 1000): Boolean {
+        return AccessibilityHelper.longPressByIndex(index, duration)
+    }
+
+    /**
+     * 向索引元素输入文本
+     */
+    fun inputTextByIndex(index: Int, text: String, clear: Boolean = false): Boolean {
+        return AccessibilityHelper.inputText(index, text, clear)
+    }
+
+    /**
+     * 向当前焦点输入文本
+     */
+    fun inputTextToFocused(text: String, clear: Boolean = false): Boolean {
+        return AccessibilityHelper.inputTextToFocused(text, clear)
+    }
+
+    /**
+     * 滚动元素
+     */
+    fun scrollByIndex(index: Int, forward: Boolean = true): Boolean {
+        return AccessibilityHelper.scrollByIndex(index, forward)
+    }
+
+    /**
+     * 通过无障碍服务执行滑动
+     */
+    fun swipeByAccessibility(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long = 300): Boolean {
+        return AccessibilityHelper.swipe(x1, y1, x2, y2, duration)
+    }
+
+    /**
+     * 通过无障碍服务按返回键
+     */
+    fun backByAccessibility(): Boolean {
+        return AccessibilityHelper.pressBack()
+    }
+
+    /**
+     * 通过无障碍服务按 Home 键
+     */
+    fun homeByAccessibility(): Boolean {
+        return AccessibilityHelper.pressHome()
+    }
+
+    /**
+     * 智能点击：优先使用索引，fallback 到坐标
+     */
+    fun smartTap(index: Int?, x: Int?, y: Int?): Boolean {
+        // 优先使用索引模式
+        if (index != null && isAccessibilityAvailable()) {
+            val result = tapByIndex(index)
+            if (result) return true
+            println("[DeviceController] tapByIndex failed, falling back to coordinate")
+        }
+
+        // Fallback 到坐标模式
+        if (x != null && y != null) {
+            tap(x, y)
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * 智能输入：优先使用索引，fallback 到焦点输入或剪贴板
+     */
+    fun smartType(index: Int?, text: String, clear: Boolean = false): Boolean {
+        // 优先使用索引模式
+        if (index != null && isAccessibilityAvailable()) {
+            val result = inputTextByIndex(index, text, clear)
+            if (result) return true
+            println("[DeviceController] inputTextByIndex failed, trying focused input")
+        }
+
+        // 尝试焦点输入
+        if (isAccessibilityAvailable()) {
+            val result = inputTextToFocused(text, clear)
+            if (result) return true
+            println("[DeviceController] inputTextToFocused failed, falling back to shell")
+        }
+
+        // Fallback 到 shell 输入
+        type(text)
+        return true
     }
 }

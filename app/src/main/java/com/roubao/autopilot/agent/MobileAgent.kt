@@ -106,6 +106,14 @@ class MobileAgent(
         infoPool.installedApps = apps.joinToString(", ")
         log("已加载 ${apps.size} 个应用")
 
+        // 检查无障碍服务状态
+        infoPool.accessibilityEnabled = controller.isAccessibilityAvailable()
+        if (infoPool.accessibilityEnabled) {
+            log("✅ 无障碍服务已启用 - 使用混合模式（索引+坐标）")
+        } else {
+            log("ℹ️ 无障碍服务未启用 - 使用纯视觉模式")
+        }
+
         // 显示悬浮窗 (带停止按钮)
         OverlayService.show(context, "开始执行...") {
             // 停止回调 - 设置状态为停止
@@ -229,6 +237,18 @@ class MobileAgent(
                         updateState { copy(isRunning = false, isCompleted = true) }
                         bringAppToFront()
                         return AgentResult(success = true, message = "任务完成")
+                    }
+                }
+
+                // 4.5 获取 UI 树上下文（无障碍模式）
+                if (infoPool.accessibilityEnabled) {
+                    val uiTreeContext = controller.getUITreeContext()
+                    if (uiTreeContext.isNotEmpty()) {
+                        infoPool.uiTreeContext = uiTreeContext
+                        log("已获取 UI 树 (${uiTreeContext.lines().size} 行)")
+                    } else {
+                        infoPool.uiTreeContext = ""
+                        log("UI 树获取失败，将使用纯坐标模式")
                     }
                 }
 
@@ -448,6 +468,7 @@ class MobileAgent(
 
     /**
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
+     * 支持混合模式：优先使用索引，fallback 到坐标
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool) = withContext(Dispatchers.IO) {
         // 动态获取屏幕尺寸（处理横竖屏切换）
@@ -455,9 +476,21 @@ class MobileAgent(
 
         when (action.type) {
             "click" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
-                controller.tap(x, y)
+                // 优先使用索引模式
+                if (action.isIndexMode && infoPool.accessibilityEnabled) {
+                    val success = controller.tapByIndex(action.index!!)
+                    if (success) {
+                        log("索引点击成功: index=${action.index}")
+                        return@withContext
+                    }
+                    log("索引点击失败，尝试坐标模式")
+                }
+                // Fallback 到坐标模式
+                if (action.isCoordinateMode) {
+                    val x = mapCoordinate(action.x!!, screenWidth)
+                    val y = mapCoordinate(action.y!!, screenHeight)
+                    controller.tap(x, y)
+                }
             }
             "double_tap" -> {
                 val x = mapCoordinate(action.x ?: 0, screenWidth)
@@ -465,24 +498,99 @@ class MobileAgent(
                 controller.doubleTap(x, y)
             }
             "long_press" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
-                controller.longPress(x, y)
+                // 优先使用索引模式
+                if (action.isIndexMode && infoPool.accessibilityEnabled) {
+                    val success = controller.longPressByIndex(action.index!!)
+                    if (success) {
+                        log("索引长按成功: index=${action.index}")
+                        return@withContext
+                    }
+                    log("索引长按失败，尝试坐标模式")
+                }
+                // Fallback 到坐标模式
+                if (action.isCoordinateMode) {
+                    val x = mapCoordinate(action.x!!, screenWidth)
+                    val y = mapCoordinate(action.y!!, screenHeight)
+                    controller.longPress(x, y)
+                }
             }
             "swipe" -> {
                 val x1 = mapCoordinate(action.x ?: 0, screenWidth)
                 val y1 = mapCoordinate(action.y ?: 0, screenHeight)
                 val x2 = mapCoordinate(action.x2 ?: 0, screenWidth)
                 val y2 = mapCoordinate(action.y2 ?: 0, screenHeight)
+                // 优先使用无障碍服务滑动
+                if (infoPool.accessibilityEnabled) {
+                    val success = controller.swipeByAccessibility(x1, y1, x2, y2)
+                    if (success) {
+                        log("无障碍滑动成功")
+                        return@withContext
+                    }
+                }
+                // Fallback 到 shell 命令
                 controller.swipe(x1, y1, x2, y2)
             }
             "type" -> {
-                action.text?.let { controller.type(it) }
+                action.text?.let { text ->
+                    // 优先使用索引模式注入文本
+                    if (action.isIndexMode && infoPool.accessibilityEnabled) {
+                        val success = controller.inputTextByIndex(action.index!!, text, clear = true)
+                        if (success) {
+                            log("索引输入成功: index=${action.index}")
+                            return@withContext
+                        }
+                        log("索引输入失败，尝试焦点输入")
+                    }
+                    // 尝试焦点输入
+                    if (infoPool.accessibilityEnabled) {
+                        val success = controller.inputTextToFocused(text, clear = false)
+                        if (success) {
+                            log("焦点输入成功")
+                            return@withContext
+                        }
+                    }
+                    // Fallback 到 shell 输入
+                    controller.type(text)
+                }
+            }
+            "scroll" -> {
+                // 新增滚动动作
+                if (action.isIndexMode && infoPool.accessibilityEnabled) {
+                    val forward = action.direction != "up" && action.direction != "left"
+                    val success = controller.scrollByIndex(action.index!!, forward)
+                    if (success) {
+                        log("索引滚动成功: index=${action.index}, direction=${action.direction}")
+                        return@withContext
+                    }
+                }
+                // Fallback 到滑动
+                val centerX = screenWidth / 2
+                val centerY = screenHeight / 2
+                when (action.direction) {
+                    "up" -> controller.swipe(centerX, centerY + 300, centerX, centerY - 300)
+                    "down" -> controller.swipe(centerX, centerY - 300, centerX, centerY + 300)
+                    "left" -> controller.swipe(centerX + 300, centerY, centerX - 300, centerY)
+                    "right" -> controller.swipe(centerX - 300, centerY, centerX + 300, centerY)
+                    else -> controller.swipe(centerX, centerY + 300, centerX, centerY - 300)
+                }
             }
             "system_button" -> {
                 when (action.button) {
-                    "Back", "back" -> controller.back()
-                    "Home", "home" -> controller.home()
+                    "Back", "back" -> {
+                        // 优先使用无障碍服务
+                        if (infoPool.accessibilityEnabled) {
+                            controller.backByAccessibility()
+                        } else {
+                            controller.back()
+                        }
+                    }
+                    "Home", "home" -> {
+                        if (infoPool.accessibilityEnabled) {
+                            controller.homeByAccessibility()
+                        } else {
+                            controller.home()
+                        }
+                    }
                     "Enter", "enter" -> controller.enter()
                     else -> log("未知系统按钮: ${action.button}")
                 }

@@ -47,24 +47,43 @@ data class InfoPool(
     var executorMemory: ConversationMemory? = null,
 
     // 已安装应用列表（用于 open_app 动作）
-    var installedApps: String = ""
+    var installedApps: String = "",
+
+    // 无障碍服务相关
+    var accessibilityEnabled: Boolean = false,  // 无障碍服务是否可用
+    var uiTreeContext: String = ""              // UI 树上下文（元素列表）
 )
 
 /**
  * 动作定义
+ * 支持两种定位方式：
+ * 1. 坐标模式：使用 x, y 坐标（传统视觉模式）
+ * 2. 索引模式：使用 index 元素索引（无障碍服务模式）
  */
 data class Action(
-    val type: String,           // click, double_tap, swipe, type, system_button, open_app, answer, wait, take_over
+    val type: String,           // click, double_tap, swipe, type, system_button, open_app, answer, wait, take_over, scroll
     val x: Int? = null,
     val y: Int? = null,
     val x2: Int? = null,
     val y2: Int? = null,
+    val index: Int? = null,     // 元素索引（无障碍服务模式）
     val text: String? = null,
     val button: String? = null,  // Back, Home, Enter
     val duration: Int? = null,   // wait 动作的等待时长（秒）
     val message: String? = null, // take_over 动作的提示消息，或敏感操作确认消息
-    val needConfirm: Boolean = false  // 敏感操作需要用户确认
+    val needConfirm: Boolean = false,  // 敏感操作需要用户确认
+    val direction: String? = null  // scroll 方向: up, down, left, right
 ) {
+    /**
+     * 是否使用索引模式
+     */
+    val isIndexMode: Boolean get() = index != null
+
+    /**
+     * 是否使用坐标模式
+     */
+    val isCoordinateMode: Boolean get() = x != null && y != null
+
     companion object {
         fun fromJson(json: String): Action? {
             return try {
@@ -81,11 +100,13 @@ data class Action(
                     y = obj.optJSONArray("coordinate")?.optInt(1),
                     x2 = obj.optJSONArray("coordinate2")?.optInt(0),
                     y2 = obj.optJSONArray("coordinate2")?.optInt(1),
+                    index = if (obj.has("index")) obj.optInt("index") else null,
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
                     duration = if (obj.has("duration")) obj.optInt("duration", 3) else null,
                     message = obj.optString("message", null),
-                    needConfirm = obj.optBoolean("need_confirm", false)
+                    needConfirm = obj.optBoolean("need_confirm", false),
+                    direction = obj.optString("direction", null)
                 )
             } catch (e: Exception) {
                 null
@@ -109,10 +130,12 @@ data class Action(
             coord2.put(y2)
             obj.put("coordinate2", coord2)
         }
+        index?.let { obj.put("index", it) }
         text?.let { obj.put("text", it) }
         button?.let { obj.put("button", it) }
         duration?.let { obj.put("duration", it) }
         message?.let { obj.put("message", it) }
+        direction?.let { obj.put("direction", it) }
         if (needConfirm) obj.put("need_confirm", true)
 
         return obj.toString()
