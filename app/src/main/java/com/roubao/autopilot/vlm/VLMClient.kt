@@ -22,9 +22,12 @@ import java.util.concurrent.TimeUnit
  */
 class VLMClient(
     private val apiKey: String,
-    private val baseUrl: String = "https://api.openai.com/v1",
+    baseUrl: String = "https://api.openai.com/v1",
     private val model: String = "gpt-4-vision-preview"
 ) {
+    // 规范化 URL：自动添加 https:// 前缀，移除末尾斜杠
+    private val baseUrl: String = normalizeUrl(baseUrl)
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
@@ -36,6 +39,15 @@ class VLMClient(
     companion object {
         private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 1000L
+
+        /** 规范化 URL：自动添加 https:// 前缀，移除末尾斜杠 */
+        private fun normalizeUrl(url: String): String {
+            var normalized = url.trim().removeSuffix("/")
+            if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+                normalized = "https://$normalized"
+            }
+            return normalized
+        }
 
         /**
          * 从 API 获取可用模型列表
@@ -50,7 +62,7 @@ class VLMClient(
                 .build()
 
             // 清理 URL，确保正确拼接
-            val cleanBaseUrl = baseUrl.removeSuffix("/chat/completions").removeSuffix("/")
+            val cleanBaseUrl = normalizeUrl(baseUrl.removeSuffix("/chat/completions"))
 
             val request = Request.Builder()
                 .url("$cleanBaseUrl/models")
@@ -127,6 +139,8 @@ class VLMClient(
                     put("messages", messages)
                     put("max_tokens", 4096)
                     put("temperature", 0.0)
+                    put("top_p", 0.85)
+                    put("frequency_penalty", 0.2)  // 减少重复输出
                 }
 
                 val request = Request.Builder()

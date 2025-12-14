@@ -46,6 +46,9 @@ class OverlayService : Service() {
         private var isTakeOverMode = false
         private var isConfirmMode = false  // 敏感操作确认模式
 
+        // 等待 instance 回调队列
+        private val pendingCallbacks = mutableListOf<() -> Unit>()
+
         fun show(context: Context, text: String, onStop: (() -> Unit)? = null) {
             stopCallback = onStop
             isTakeOverMode = false
@@ -65,6 +68,7 @@ class OverlayService : Service() {
             confirmCallback = null
             isTakeOverMode = false
             isConfirmMode = false
+            pendingCallbacks.clear()
             context.stopService(Intent(context, OverlayService::class.java))
         }
 
@@ -81,18 +85,49 @@ class OverlayService : Service() {
 
         /** 显示人机协作模式 - 等待用户手动完成操作 */
         fun showTakeOver(message: String, onContinue: () -> Unit) {
-            continueCallback = onContinue
-            isTakeOverMode = true
-            isConfirmMode = false
-            instance?.setTakeOverMode(message)
+            val action: () -> Unit = {
+                println("[OverlayService] showTakeOver: $message")
+                continueCallback = onContinue
+                isTakeOverMode = true
+                isConfirmMode = false
+                instance?.setTakeOverMode(message)
+                Unit
+            }
+
+            if (instance != null) {
+                action()
+            } else {
+                // 悬浮窗尚未启动，加入等待队列
+                println("[OverlayService] showTakeOver: instance is null, queuing...")
+                pendingCallbacks.add(action)
+            }
         }
 
         /** 显示敏感操作确认模式 - 用户确认或取消 */
         fun showConfirm(message: String, onConfirm: (Boolean) -> Unit) {
-            confirmCallback = onConfirm
-            isConfirmMode = true
-            isTakeOverMode = false
-            instance?.setConfirmMode(message)
+            val action: () -> Unit = {
+                println("[OverlayService] showConfirm: $message")
+                confirmCallback = onConfirm
+                isConfirmMode = true
+                isTakeOverMode = false
+                instance?.setConfirmMode(message)
+                Unit
+            }
+
+            if (instance != null) {
+                action()
+            } else {
+                // 悬浮窗尚未启动，加入等待队列
+                println("[OverlayService] showConfirm: instance is null, queuing...")
+                pendingCallbacks.add(action)
+            }
+        }
+
+        /** 当 instance 可用时执行等待中的回调 */
+        private fun processPendingCallbacks() {
+            println("[OverlayService] processPendingCallbacks: ${pendingCallbacks.size} pending")
+            pendingCallbacks.forEach { it.invoke() }
+            pendingCallbacks.clear()
         }
     }
 
@@ -102,44 +137,69 @@ class OverlayService : Service() {
         super.onCreate()
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        startForegroundService()
-        createOverlayView()
+
+        // 必须第一时间调用 startForeground，否则会崩溃
+        startForegroundNotification()
+
+        // 创建悬浮窗（可能因权限问题失败）
+        try {
+            createOverlayView()
+        } catch (e: Exception) {
+            println("[OverlayService] createOverlayView failed: ${e.message}")
+        }
+
+        // 处理在 service 启动前排队的回调
+        processPendingCallbacks()
     }
 
-    private fun startForegroundService() {
+    private fun startForegroundNotification() {
         val channelId = "baozi_overlay"
         val channelName = "肉包状态"
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                channelName,
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "显示肉包执行状态"
-                setShowBadge(false)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    channelId,
+                    channelName,
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "显示肉包执行状态"
+                    setShowBadge(false)
+                }
+                val notificationManager = getSystemService(NotificationManager::class.java)
+                notificationManager.createNotificationChannel(channel)
             }
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
+
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle("肉包运行中")
+                .setContentText("正在执行自动化任务...")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+
+            startForeground(1001, notification)
+        } catch (e: Exception) {
+            println("[OverlayService] startForegroundNotification error: ${e.message}")
+            // 降级：使用最简单的通知确保 startForeground 被调用
+            try {
+                val fallbackNotification = NotificationCompat.Builder(this, channelId)
+                    .setContentTitle("肉包")
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .build()
+                startForeground(1001, fallbackNotification)
+            } catch (e2: Exception) {
+                println("[OverlayService] fallback startForeground also failed: ${e2.message}")
+            }
         }
-
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("肉包运行中")
-            .setContentText("正在执行自动化任务...")
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        startForeground(1001, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -399,15 +459,22 @@ class OverlayService : Service() {
 
     /** 切换到人机协作模式 */
     private fun setTakeOverMode(message: String) {
+        println("[OverlayService] setTakeOverMode: $message")
         overlayView?.post {
+            // 确保悬浮窗可见
+            overlayView?.visibility = View.VISIBLE
             textView?.text = "🖐 $message"
             actionButton?.text = "✅ 继续"
             actionButton?.setTextColor(Color.parseColor("#90EE90")) // 浅绿色
+            // 隐藏取消按钮（人机协作只有继续按钮）
+            divider2?.visibility = View.GONE
+            cancelButton?.visibility = View.GONE
         }
     }
 
     /** 切换到正常模式 */
     private fun setNormalMode() {
+        println("[OverlayService] setNormalMode")
         overlayView?.post {
             actionButton?.text = "⏹ 停止"
             actionButton?.setTextColor(Color.WHITE)
@@ -419,7 +486,10 @@ class OverlayService : Service() {
 
     /** 切换到敏感操作确认模式 */
     private fun setConfirmMode(message: String) {
+        println("[OverlayService] setConfirmMode: $message")
         overlayView?.post {
+            // 确保悬浮窗可见
+            overlayView?.visibility = View.VISIBLE
             textView?.text = "⚠️ $message"
             actionButton?.text = "✅ 确认"
             actionButton?.setTextColor(Color.parseColor("#90EE90"))  // 浅绿色
