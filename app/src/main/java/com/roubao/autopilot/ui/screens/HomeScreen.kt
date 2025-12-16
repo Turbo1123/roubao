@@ -253,6 +253,7 @@ fun PresetCommandCard(
     val colors = BaoziTheme.colors
     Card(
         modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
