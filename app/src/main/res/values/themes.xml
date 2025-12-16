@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- 主应用主题 - 深色主题 -->
     <style name="Theme.Baozi" parent="android:Theme.Material.NoActionBar">
         <!-- 状态栏颜色 -->
@@ -8,7 +8,7 @@
 
         <!-- 导航栏颜色 -->
         <item name="android:navigationBarColor">@color/background_card</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:ignore="NewApi">false</item>
 
         <!-- 窗口背景 -->
         <item name="android:windowBackground">@color/background_dark</item>
