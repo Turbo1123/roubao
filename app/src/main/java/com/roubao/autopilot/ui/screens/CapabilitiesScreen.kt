@@ -240,6 +240,7 @@ fun AgentCard(agent: AgentInfo) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
             .clickable { expanded = !expanded },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)

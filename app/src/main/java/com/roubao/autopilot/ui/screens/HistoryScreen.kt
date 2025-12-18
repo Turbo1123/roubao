@@ -148,6 +148,7 @@ fun HistoryRecordCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
