@@ -144,8 +144,14 @@ class CrashHandler private constructor() : Thread.UncaughtExceptionHandler {
         private fun getAppVersion(context: Context): String {
             return try {
                 val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                "${pInfo.versionName} (${pInfo.longVersionCode})"
-            } catch (e: Exception) {
+                val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    pInfo.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    pInfo.versionCode.toLong()
+                }
+                "${pInfo.versionName} ($versionCode)"
+            } catch (_: Exception) {
                 "Unknown"
             }
         }
