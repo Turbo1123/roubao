@@ -113,25 +113,33 @@ class AppScanner(private val context: Context) {
             "wenjian" to "文件", "file" to "文件"
         )
 
-        // 语义查询映射 (用户可能说的自然语言)
-        private val SEMANTIC_MAP = mapOf(
-            // 功能描述 -> 分类
-            "拍照" to "相机", "照相" to "相机", "自拍" to "相机", "拍摄" to "相机",
-            "看照片" to "图片", "看图" to "图片", "图片" to "图片",
-            "聊天" to "社交", "发消息" to "社交", "通讯" to "社交",
-            "买东西" to "购物", "购物" to "购物", "网购" to "购物", "下单" to "购物",
-            "点餐" to "外卖", "叫外卖" to "外卖", "点外卖" to "外卖", "吃饭" to "外卖", "订餐" to "外卖",
-            "打车" to "出行", "叫车" to "出行", "出行" to "出行", "坐车" to "出行",
-            "导航" to "地图", "找路" to "地图", "去哪" to "地图", "怎么走" to "地图",
-            "听歌" to "音乐", "听音乐" to "音乐", "放歌" to "音乐", "播放音乐" to "音乐",
-            "看视频" to "视频", "刷视频" to "视频", "追剧" to "视频", "看电影" to "视频", "看剧" to "视频",
-            "付款" to "支付", "支付" to "支付", "扫码" to "支付", "收款" to "支付",
-            "记笔记" to "笔记", "记事" to "笔记", "记录" to "笔记", "写笔记" to "笔记",
-            "上网" to "浏览器", "搜索" to "浏览器", "查资料" to "浏览器",
-            "办公" to "办公", "工作" to "办公", "文档" to "办公",
-            "画图" to "AI", "生成图片" to "AI", "AI画图" to "AI", "AI" to "AI",
-            "看书" to "阅读", "阅读" to "阅读", "读书" to "阅读", "看小说" to "阅读",
-            "玩游戏" to "游戏", "游戏" to "游戏"
+        data class SemanticRule(
+            val keywords: List<String>,
+            val category: String,
+            val priority: Int = 0
+        )
+
+        // 语义查询规则（支持整句匹配 + 优先级）
+        private val SEMANTIC_RULES = listOf(
+            SemanticRule(listOf("拍照", "照相", "自拍", "拍摄"), "相机", 10),
+            SemanticRule(listOf("看照片", "看图", "图片"), "图片", 9),
+            SemanticRule(listOf("聊天", "发消息", "通讯"), "社交", 10),
+            SemanticRule(listOf("买东西", "购物", "网购", "下单"), "购物", 10),
+            SemanticRule(listOf("点餐", "叫外卖", "点外卖", "订餐", "吃饭"), "外卖", 10),
+            SemanticRule(listOf("打车", "叫车", "坐车"), "出行", 10),
+            SemanticRule(listOf("出行"), "出行", 5),
+            SemanticRule(listOf("导航", "找路", "怎么走", "去哪"), "地图", 10),
+            SemanticRule(listOf("听歌", "听音乐", "放歌", "播放音乐"), "音乐", 10),
+            SemanticRule(listOf("看视频", "刷视频", "追剧", "看电影", "看剧"), "视频", 10),
+            SemanticRule(listOf("付款", "支付", "扫码", "收款"), "支付", 10),
+            SemanticRule(listOf("记笔记", "写笔记", "记事"), "笔记", 10),
+            SemanticRule(listOf("记录"), "笔记", 5), // 降低歧义词优先级
+            SemanticRule(listOf("搜索", "查资料", "上网"), "浏览器", 9),
+            SemanticRule(listOf("画图", "生成图片", "AI画图"), "AI", 10),
+            SemanticRule(listOf("AI"), "AI", 5),
+            SemanticRule(listOf("看书", "阅读", "读书", "小说"), "阅读", 10),
+            SemanticRule(listOf("玩游戏", "游戏"), "游戏", 10),
+            SemanticRule(listOf("办公", "工作", "文档"), "办公", 9)
         )
     }
 
@@ -224,6 +232,18 @@ class AppScanner(private val context: Context) {
     }
 
     /**
+    * 根据用户自然语言查询匹配应用分类
+    * @param query 用户输入的搜索词或自然语言描述
+    * @return 匹配到的应用分类；若未命中任何语义规则则返回 null
+    */
+    fun matchCategory(input: String): String? {
+    return SEMANTIC_RULES
+        .filter { rule -> rule.keywords.any { input.contains(it) } }
+        .maxByOrNull { it.priority }
+        ?.category
+    }
+
+    /**
      * 智能搜索应用
      * @param query 搜索词（支持：应用名、拼音、分类、语义描述）
      * @param topK 返回前 K 个结果
@@ -235,7 +255,7 @@ class AppScanner(private val context: Context) {
         val results = mutableListOf<SearchResult>()
 
         // 先检查是否是语义查询，转换为分类
-        val semanticCategory = SEMANTIC_MAP[lowerQuery]
+        val category = matchSemanticCategory(userInput)
         val pinyinMapped = PINYIN_MAP[lowerQuery]
 
         for (app in apps) {
