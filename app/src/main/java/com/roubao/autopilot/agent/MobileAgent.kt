@@ -1072,18 +1072,22 @@ class MobileAgent(
     }
 
     /**
-     * 坐标映射 - 支持相对坐标和绝对坐标
+     * 坐标映射 - 支持相对坐标和绝对坐标，并优化边界溢出容错
      *
      * 坐标格式判断:
-     * - 0-999: Qwen-VL 相对坐标 (0-999 映射到屏幕)
-     * - >= 1000: 绝对像素坐标，直接使用
+     * - 0-1100 且屏幕分辨率大于 1100: Qwen-VL / DeepSeek-VL 等 VLM 的千分比归一化坐标 (0-1000 映射到屏幕)
+     *   注：处理底部/边缘控件时，模型常输出 1000~1080 的微量溢出坐标，将其安全截断在 [0, 1000] 并映射为实际物理像素。
+     * - 其他: 绝对像素坐标，直接使用并限制在屏幕范围内
      *
      * @param value 模型输出的坐标值
      * @param screenMax 屏幕实际尺寸
      */
     private fun mapCoordinate(value: Int, screenMax: Int): Int {
-        return if (value < 1000) {
-            // 相对坐标 (0-999) -> 绝对像素
+        return if (value <= 1100 && screenMax > 1100) {
+            // 相对坐标 (0-1000，容许微量溢出) -> 绝对像素
+            val normalized = value.coerceIn(0, 1000)
+            (normalized * screenMax / 1000)
+        } else if (value < 1000) {
             (value * screenMax / 999)
         } else {
             // 绝对坐标，限制在屏幕范围内
