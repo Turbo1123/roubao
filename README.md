@@ -4,7 +4,7 @@
 
 **运行时无需 Wi-Fi、无需越狱、无需电脑、无需额外硬件。支持纯蜂窝网络，在 iPhone 上独立运行 Agent。**
 
-[English](README_EN.md) · [详细安装教程](ios/docs/INSTALL.md) · [使用指南](ios/docs/USAGE.md) · [验证与限制](ios/docs/VALIDATION.md) · [架构](ios/docs/ARCHITECTURE.md)
+[English](README_EN.md) · [Android 旧版在下方](#android) · [详细安装教程](ios/docs/INSTALL.md) · [使用指南](ios/docs/USAGE.md) · [验证与限制](ios/docs/VALIDATION.md) · [架构](ios/docs/ARCHITECTURE.md)
 
 ![iOS 26+](https://img.shields.io/badge/iOS-26%2B-black)
 ![Swift and Rust](https://img.shields.io/badge/Swift%20%2B%20Rust-orange)
@@ -115,3 +115,31 @@ Xcode 工程、target 和 module 沿用 `iPhoneUse`。设置 `ROUBAO_BUNDLE_ID` 
 延续上游 **[AGPL-3.0](ios/LICENSE)**，保留原作者及第三方许可。感谢 iphone-use-app、idevice、StikDebug、LocalDevVPN/StosVPN、AgentRunKit、SwiftOpenAI，以及 ESP32 iPhone Agent、JEV 社区。[上游历史文档](ios/docs/upstream/README.md)中的演示素材属于上游，不代表肉包 2.0 的验收。
 
 搜索主题：**iPhone AI Agent、iOS 自动化、手机智能体、非越狱 iPhone、蜂窝网络 Agent、手机端 harness、computer use、phone use、mobile AI agent、no-jailbreak iOS automation、standalone iPhone agent、on-device orchestration**。
+
+---
+
+<a id="android"></a>
+
+## Android 旧版：继续保留，暂未更新
+
+**安卓没有删除，也没有并入 iPhone 版。** 原有 Kotlin 源码、Gradle 工程、MIT 许可和 APK 历史版本都保留在本仓库；当前 iPhone 2.0 的更新不代表安卓版同步升级。
+
+**[下载 Android V1.4.2 APK](https://github.com/Turbo1123/roubao/releases/tag/V1.4.2)** · [Android 完整文档](docs/ANDROID.md) · [Android English guide](docs/ANDROID_EN.md) · [Android 源码](app/) · [MIT 许可](LICENSE)
+
+### 安卓版能做什么
+
+- 原生 Kotlin + Material 3 界面，中英文界面与深浅色主题。
+- 通过视觉语言模型观察屏幕，使用自然语言发起手机操作任务。
+- 基于 Shizuku 的截图、点击、滑动、输入和应用启动。
+- 多 Agent / Tools / Skills 架构，执行记录与悬浮进度，可手动停止。
+- 自定义模型接口和模型配置；Key 由用户自行提供。旧版已有配置加密与敏感页面检测设计，具体兼容性和执行效果仍以实测为准。
+
+### 安卓安装与使用
+
+1. 准备 **Android 8.0 / API 26 及以上**手机和自己的视觉模型 API。
+2. 安装并启动 [Shizuku](https://github.com/RikkaApps/Shizuku/releases)。Android 11+ 可使用无线调试，旧版教程的无线方式需要 Wi-Fi；也可以按 Shizuku 官方说明通过电脑 ADB 启动。
+3. 下载上面的 **Android V1.4.2 APK** 并安装，不要把 iPhone 源码包当成安卓安装包。
+4. 打开肉包，在 Shizuku 中授予应用权限；进入设置填写自己的模型接口、模型 ID 和 API Key。
+5. 先跑简单任务，核对每一步实际结果，再尝试复杂流程。更多权限、配置、构建与旧版示例见 [Android 完整文档](docs/ANDROID.md)。
+
+“运行时四无需”、CoreDevice、本机 VPN、动态岛等上文说明针对 **iPhone 版**；安卓按照本节及旧版文档配置。旧的个人演示截图已因隐私清理移除，不影响 APK、源码或文档入口。

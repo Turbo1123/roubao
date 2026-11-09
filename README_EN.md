@@ -4,7 +4,7 @@
 
 **No Wi-Fi, jailbreak, computer, or extra hardware required at runtime. Run the agent independently on your iPhone, including over cellular data.**
 
-[简体中文](README.md) · [Step-by-step setup](ios/docs/INSTALL.en.md) · [User guide](ios/docs/USAGE.en.md) · [Validation and limits](ios/docs/VALIDATION.md) · [Architecture](ios/docs/ARCHITECTURE.md)
+[简体中文](README.md) · [Android below](#android) · [Step-by-step setup](ios/docs/INSTALL.en.md) · [User guide](ios/docs/USAGE.en.md) · [Validation and limits](ios/docs/VALIDATION.md) · [Architecture](ios/docs/ARCHITECTURE.md)
 
 ![iOS 26+](https://img.shields.io/badge/iOS-26%2B-black)
 ![Swift and Rust](https://img.shields.io/badge/Swift%20%2B%20Rust-orange)
@@ -115,3 +115,31 @@ The Xcode project, target, and module remain `iPhoneUse`. Set `ROUBAO_BUNDLE_ID`
 Distributed under the upstream **[AGPL-3.0 license](ios/LICENSE)** with original notices retained. Thanks to iphone-use-app, idevice, StikDebug, LocalDevVPN/StosVPN, AgentRunKit, SwiftOpenAI, ESP32 iPhone Agent, and the JEV community. [Archived upstream documentation](ios/docs/upstream/README.md) and demo assets describe upstream work, not Roubao 2.0 acceptance tests.
 
 Discovery terms: **iPhone AI agent, iOS automation, mobile AI agent, phone use, computer use, no-jailbreak iPhone automation, cellular-data agent, standalone iPhone agent, on-device agent harness, on-device orchestration, SwiftUI, Rust, CoreDevice, multimodal automation**.
+
+---
+
+<a id="android"></a>
+
+## Legacy Android: retained, not updated alongside iPhone 2.0
+
+**Android has not been removed or merged into the iPhone app.** Its Kotlin source, Gradle project, MIT license, and historical APK releases remain in this repository. iPhone 2.0 updates do not imply an Android upgrade.
+
+**[Download Android V1.4.2 APK](https://github.com/Turbo1123/roubao/releases/tag/V1.4.2)** · [Full Android guide](docs/ANDROID_EN.md) · [中文文档](docs/ANDROID.md) · [Android source](app/) · [MIT license](LICENSE)
+
+### What the Android version offers
+
+- Native Kotlin and Material 3 UI, Chinese/English interfaces, and light/dark themes.
+- Vision-language-model screen observation and natural-language phone tasks.
+- Shizuku-based screenshots, taps, swipes, text entry, and app launching.
+- Multi-agent / Tools / Skills architecture, execution history, overlay progress, and manual Stop.
+- Custom model endpoints and model configuration with your own API key. The legacy design includes configuration encryption and sensitive-screen detection; verify compatibility and actual behavior on your setup.
+
+### Android setup
+
+1. Prepare an **Android 8.0 / API 26 or later** phone and your own vision-model API.
+2. Install/start [Shizuku](https://github.com/RikkaApps/Shizuku/releases). Android 11+ supports wireless debugging; the legacy wireless guide requires Wi-Fi. Computer ADB startup is an alternative following Shizuku's official guidance.
+3. Download and install the **Android V1.4.2 APK** linked above. The iPhone source archive is not an Android installer.
+4. Open Roubao, authorize it in Shizuku, and configure your model endpoint, model ID, and API key in Settings.
+5. Verify a simple task and its actual results before complex workflows. See the [full legacy Android guide](docs/ANDROID_EN.md) for permissions, configuration, building, and examples.
+
+The runtime “four no-requirements” statement, CoreDevice, loopback VPN, and Dynamic Island sections above concern **iPhone**. Android follows its separate setup. Old personal demo screenshots were removed during privacy cleanup; the APKs, source, and documentation remain available.
