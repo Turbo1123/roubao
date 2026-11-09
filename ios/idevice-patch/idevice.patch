@@ -1,0 +1,23 @@
+diff --git a/ffi/Cargo.toml b/ffi/Cargo.toml
+index 93d2ca8..98f024f 100644
+--- a/ffi/Cargo.toml
++++ b/ffi/Cargo.toml
+@@ -33,7 +33,7 @@ afc = ["idevice/afc"]
+ amfi = ["idevice/amfi"]
+ bt_packet_logger = ["idevice/bt_packet_logger"]
+ companion_proxy = ["idevice/companion_proxy"]
+-core_device = ["idevice/core_device", "dep:futures", "dep:uuid", "rsd"]
++core_device = ["idevice/core_device", "idevice/display_stream", "dep:futures", "dep:uuid", "rsd"]
+ core_device_proxy = ["idevice/core_device_proxy", "idevice/tunnel_tcp_stack"]
+ crashreportcopymobile = ["idevice/crashreportcopymobile", "afc"]
+ cryptexd = ["idevice/cryptexd", "rsd", "tss"]
+diff --git a/ffi/src/core_device/mod.rs b/ffi/src/core_device/mod.rs
+index 7bb5ea9..131539d 100644
+--- a/ffi/src/core_device/mod.rs
++++ b/ffi/src/core_device/mod.rs
+@@ -5,3 +5,5 @@ pub mod configuration_service;
+ pub mod diagnosticsservice;
+ pub mod file_service;
+ pub mod icon_service;
++#[cfg(all(feature = "core_device_proxy", feature = "rsd"))]
++pub mod probe;

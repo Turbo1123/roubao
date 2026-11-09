@@ -1,0 +1,62 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "extended-srgb:1,1,1,1"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "extended-srgb:0.12549,0.12941,0.14118,1"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "3D mouse with integrated contact shadow",
+      "layers": [
+        {
+          "name": "Light and dark studio render",
+          "image-name-specializations": [
+            {
+              "value": "mouse-light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "mouse-dark.png"
+            }
+          ],
+          "glass": false,
+          "position": {
+            "scale": 0.8165869218500797,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "blur-material": 0,
+      "refractivity": {
+        "enabled": false,
+        "strength": 0,
+        "depth": 0
+      },
+      "lighting": "individual"
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  },
+  "material-strength": 0
+}
