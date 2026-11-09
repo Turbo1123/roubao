@@ -12,6 +12,14 @@
 
 > **首次配置仍需 Mac + USB**：编译签名、安装、开启开发者模式、生成并导入本机配对文件。配置完成后，Mac 可以关机、USB 可以拔掉。签名到期或配对失效时需要维护。“独立运行”指任务循环和手机控制在本机，模型推理使用你配置的联网 API，**不代表离线大模型**。当前发布为开发者源码预览版。
 
+## 真机演示（3× 速度）
+
+[![肉包 2.0 for iPhone 真机演示：应用检索、PDF 报告与原生分享](https://img.youtube.com/vi/H0GKo_TD2i4/hqdefault.jpg)](https://www.youtube.com/watch?v=H0GKo_TD2i4)
+
+**[▶ 在 YouTube 观看完整演示](https://www.youtube.com/watch?v=H0GKo_TD2i4)** · 约 1 分 18 秒 · 英文字幕与背景音乐
+
+真实 iPhone 上的应用资料查询、PDF 报告与原生分享流程；保留完整操作顺序，以 **3× 速度**展示。点击封面即可观看视频。
+
 ## 把“AI 手机”的跨应用能力带到 iPhone
 
 **不必换手机：自选模型、微 x操作、任务续聊、PDF 报告，把 AI 手机的操作体验带到你现有的 iPhone。**

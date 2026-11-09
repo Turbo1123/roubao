@@ -12,6 +12,14 @@
 
 > **Initial setup requires a Mac and USB** to build, sign, install, enable Developer Mode, and create/import a device-specific pairing file. Then unplug USB and shut down the Mac. Signing expiration or invalid pairing may require maintenance. The agent loop and device control run on the phone; **model inference uses your configured online API**, rather than an offline local LLM. This release is a developer source preview.
 
+## Real iPhone demo (3× speed)
+
+[![Roubao 2.0 iPhone AI agent demo: app research, PDF reports and native sharing](https://img.youtube.com/vi/H0GKo_TD2i4/hqdefault.jpg)](https://www.youtube.com/watch?v=H0GKo_TD2i4)
+
+**[▶ Watch the full demo on YouTube](https://www.youtube.com/watch?v=H0GKo_TD2i4)** · About 1 min 18 sec · English captions and background music
+
+A real-device walkthrough of app research, PDF reports, and native iOS sharing. The full action order is preserved and shown at **3× speed**. Click the thumbnail to watch.
+
 ## Platform versions and entry points
 
 | Platform | Status | Source and guides | License |
