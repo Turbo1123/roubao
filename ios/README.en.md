@@ -1,6 +1,6 @@
 # Roubao 2.0 for iPhone — Open-source iPhone AI Agent
 
-**Let AI operate your iPhone: see the screen, tap, type, and work across apps.**
+**Let AI operate your iPhone: see the screen, tap, type, and work across apps, including owner-authorized WeChat UI control.**
 
 **No Wi-Fi, jailbreak, computer, or extra hardware required at runtime. Run the agent independently on your iPhone, including over cellular data.**
 
@@ -14,6 +14,8 @@
 
 ## Give your existing iPhone an AI operator
 
+**Keep your iPhone. Choose your models, operate WeChat, resume tasks, and create/share PDF reports—all from the phone you already own.**
+
 Describe a goal. Roubao observes the screen, plans, and operates apps. When it needs your preference or approval, it notifies you, shows question cards, and resumes with your answer. It brings the idea of a Doubao-style AI phone experience to an existing iPhone without replacing the phone or attaching a controller. This independent project has no official affiliation with Doubao, ByteDance, or Apple, and makes no claim of feature equivalence.
 
 Roubao is an **open-source iPhone AI agent, iOS automation client, and phone-use harness**, built on [iphone-use-app](https://github.com/EliotAndres/iphone-use-app) with upstream credits and AGPL-3.0 licensing preserved. The [legacy Android version](../docs/ANDROID_EN.md) remains at the repository root; this directory contains the iPhone version.
@@ -23,6 +25,7 @@ Roubao is an **open-source iPhone AI agent, iOS automation client, and phone-use
 | Capability | How it works |
 |---|---|
 | Cross-app control | Launch apps, capture screens, tap, long-press, swipe, enter Unicode text, and return Home |
+| **WeChat control (experimental)** | Owner-authorized UI operation and file sharing; development testing delivered a generated PDF to a specified chat |
 | Research and comparison | Read map listings or product pages and organize visible information across apps |
 | PDF reports | Compare matching products and visible price conditions; create reports with tables and screenshot evidence |
 | Follow-up conversations | Revise a completed report or add a platform, retaining the conversation and files |
@@ -35,6 +38,12 @@ Roubao is an **open-source iPhone AI agent, iOS automation client, and phone-use
 | Visual recovery | OCR assists grounding; two failed locating attempts require fresh primary-model image grounding |
 
 These are implemented capabilities, **not a guarantee of successful completion for every workflow**. Calculator, research, PDF, and voice development checks exist; reliable unattended messaging, checkout, and payment have not been established. [Validation and limits](docs/VALIDATION.md)
+
+## WeChat support, too
+
+Roubao can operate WeChat with your authorization through the same screenshot, tap, input, and native sharing tools used across apps. A physical-device development flow delivered a generated PDF to a specified chat. Example: “Share the PDF from this conversation to the WeChat chat I specify. Let me verify the recipient and file before sending.”
+
+WeChat support remains experimental. Verify recipients, files, and content before sending. Historical tests also exposed duplicate delivery and an unintended tap. General authorization/duplicate-action protections were added, but the full sending flow has not been revalidated afterward. Reliable unattended sending or coverage of every WeChat screen is not claimed. See [validation and known limits](docs/VALIDATION.md). Login, verification, and system permissions are not bypassed.
 
 ## Do I need WebDriverAgent?
 
@@ -63,6 +72,7 @@ Open Calculator, clear it, calculate 23×17, and read the result.
 Find three nearby coffee shops in Maps and summarize distance and opening information. Do not order.
 Compare the same phone model and storage size on three specified shopping apps, record price conditions and screenshots, and create a PDF.
 Continue the report: flag membership/coupon requirements and save a revised version.
+Share the PDF to the WeChat chat I specify. Let me verify the recipient and file before sending.
 ```
 
 Missing choices such as locations or accounts should be asked inside Roubao. Review destinations and content before final actions. Do not use a real payment as your first connection test.
