@@ -14,7 +14,7 @@ Release preparation: **2026-11-09**. This is a developer preview, not a general 
 | Paste permission | Controlled in-app test triggered a paste prompt, clicked Allow through the driver, and checked exact synthetic field text | This does not prove arbitrary system prompts or every app's whole-field replacement |
 | Visual grounding | Synthetic image-only target probe worked; offline recovery and target freshness cases pass | Not a general localization accuracy benchmark |
 | Latest coffee loop fix | Offline dynamic-page examples and private recorded-frame replay tested structural stall detection | Coffee ordering was NOT rerun end to end after the fix; checkout/payment not accepted |
-| WeChat / 微信操作与文件分享 | A physical-device development flow delivered a generated PDF to a specified WeChat chat; duplicate delivery and an unintended tap were also observed and informed general guards | The complete sending flow was not rerun after the guards were added. Reliable unattended messaging is NOT claimed; important outcomes need owner verification |
+| Micro-X / 微 x操作与文件分享 | A physical-device development flow delivered a generated PDF to a specified Micro-X chat; duplicate delivery and an unintended tap were also observed and informed general guards | The complete sending flow was not rerun after the guards were added. Reliable unattended messaging is NOT claimed; important outcomes need owner verification |
 | Free Apple ID | Build switch and external VPN path inherited/documented | Full end-to-end free-team installation not accepted in this release |
 
 ## Known limits / 已知限制

@@ -25,17 +25,6 @@
   <img src="https://img.shields.io/badge/Language-Kotlin-purple.svg" alt="Language">
 </p>
 
-<p align="center">
-  <img src="demo/demo.gif" width="280" alt="Demo">
-</p>
-
-<p align="center">
-  <img src="screenshots/1.jpg" width="180" alt="Home">
-  <img src="screenshots/3.jpg" width="180" alt="Capabilities">
-  <img src="screenshots/2.jpg" width="180" alt="History">
-  <img src="screenshots/4.jpg" width="180" alt="Settings">
-</p>
-
 ---
 
 ## Background
@@ -158,13 +147,13 @@ User-facing task layer that maps natural language to specific operations:
 | Order Food (Meituan) | GUI Automation | Step-by-step operation on Meituan App |
 | Navigate (Amap) | Delegation | DeepLink directly to Amap search |
 | Generate Image (Jimeng) | Delegation | Open Jimeng AI to generate images |
-| Send WeChat | GUI Automation | Auto-operate WeChat to send messages |
+| Send Micro-X | GUI Automation | Auto-operate Micro-X to send messages |
 
 **Two Execution Modes:**
 
 1. **Delegation**: For high-confidence matches, directly open AI-capable apps (like Xiaomei, Doubao, Jimeng) via DeepLink to complete tasks. **Fast, one-step.**
 
-2. **GUI Automation**: For apps without AI capability (like Meituan, WeChat), complete tasks through traditional screenshot-analyze-operate loops. Skills provide step guidance for better success rates.
+2. **GUI Automation**: For apps without AI capability (like Meituan, Micro-X), complete tasks through traditional screenshot-analyze-operate loops. Skills provide step guidance for better success rates.
 
 ---
 
@@ -290,7 +279,7 @@ Watch trending videos on Bilibili
 │   │                   Skills Layer                       │   │
 │   │    SkillManager → Intent Recognition → Fast/Standard │   │
 │   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ Order Food │ Navigate │ Taxi │ WeChat │ AI Art │  │
+│   │    │ Order Food │ Navigate │ Taxi │ Micro-X │ AI Art │  │
 │   │    └─────────────────────────────────────────────┘  │   │
 │   └─────────────────────────────────────────────────────┘   │
 │                            │                                 │

@@ -25,17 +25,6 @@
   <img src="https://img.shields.io/badge/Language-Kotlin-purple.svg" alt="Language">
 </p>
 
-<p align="center">
-  <img src="demo/demo.gif" width="280" alt="演示">
-</p>
-
-<p align="center">
-  <img src="screenshots/1.jpg" width="180" alt="首页">
-  <img src="screenshots/3.jpg" width="180" alt="能力">
-  <img src="screenshots/2.jpg" width="180" alt="执行记录">
-  <img src="screenshots/4.jpg" width="180" alt="设置">
-</p>
-
 ---
 
 ## 项目背景
@@ -158,13 +147,13 @@ Android 系统出于安全考虑，普通 App 无法：
 | 点外卖(美团) | GUI 自动化 | 在美团 App 上一步步操作 |
 | 导航(高德) | Delegation | DeepLink 直达高德搜索 |
 | 生成图片(即梦) | Delegation | 打开即梦 AI 生成图片 |
-| 发微信 | GUI 自动化 | 自动操作微信发消息 |
+| 发微 x | GUI 自动化 | 自动操作微 x发消息 |
 
 **两种执行模式：**
 
 1. **Delegation（委托）**：高置信度匹配时，直接通过 DeepLink 打开有 AI 能力的 App（如小美、豆包、即梦），让它们完成任务。**快速、一步到位。**
 
-2. **GUI 自动化**：没有 AI 能力的 App（如美团、微信），通过传统的截图-分析-操作循环完成。Skill 会提供操作步骤指导，提高成功率。
+2. **GUI 自动化**：没有 AI 能力的 App（如美团、微 x），通过传统的截图-分析-操作循环完成。Skill 会提供操作步骤指导，提高成功率。
 
 ---
 
@@ -291,7 +280,7 @@ Shizuku 是一个开源工具，可以让普通应用获得 ADB 权限，无需 
 │   │                   Skills 层                          │   │
 │   │    SkillManager → 意图识别 → 快速路径/标准路径        │   │
 │   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ 点外卖 │ 导航 │ 打车 │ 发微信 │ AI画图 │ ... │  │   │
+│   │    │ 点外卖 │ 导航 │ 打车 │ 发微 x │ AI画图 │ ... │  │   │
 │   │    └─────────────────────────────────────────────┘  │   │
 │   └─────────────────────────────────────────────────────┘   │
 │                            │                                 │
@@ -492,7 +481,7 @@ cd roubao
 1. 打开肉包 App → 设置
 2. 找到「反馈与调试」分组
 3. 点击「导出日志」
-4. 选择分享方式（微信、邮件等）发送给开发者
+4. 选择分享方式（微 x、邮件等）发送给开发者
 
 ### 日志包含的信息
 
