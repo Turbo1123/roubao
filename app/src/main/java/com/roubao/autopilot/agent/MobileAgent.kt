@@ -1450,16 +1450,12 @@ class MobileAgent(
     }
 
     /**
-     * 返回肉包App
+     * 任务结束后的收尾：按用户要求（2026-11-19）不再返回伴语 App，
+     * 干完就停留在当前页面，所以这里什么都不做。
+     * （原实现会把 App 拉回前台，已去掉；30 多处退出路径都走这里，一处生效。）
      */
     private fun bringAppToFront() {
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            log("返回App失败: ${e.message}")
-        }
+        // no-op: stay on the current page after the task finishes
     }
 
     private fun log(message: String) {
