@@ -30,6 +30,17 @@ Text Related:
         append("You are an agent who can operate an Android phone. ")
         append("Decide the next action based on the current state.\n\n")
 
+        if (infoPool.customSystemPrompt.isNotEmpty()) {
+            append("### System Prompt ###\n")
+            append("${infoPool.customSystemPrompt}\n\n")
+        }
+
+        if (infoPool.longTermMemory.isNotEmpty()) {
+            append("### Long-term Memory ###\n")
+            append("以下是你与用户在之前会话中的互动记忆，请保持角色与记忆的连贯性：\n")
+            append("${infoPool.longTermMemory}\n\n")
+        }
+
         append("### User Request ###\n")
         append("${infoPool.instruction}\n\n")
 
@@ -53,6 +64,11 @@ Text Related:
         append("---\n")
         append("Examine all information and decide on the next action.\n\n")
 
+        append("#### Coordinate System (IMPORTANT) ####\n")
+        append("All coordinates MUST be integers in [0, 1000]. (0, 0) is the TOP-LEFT corner of the screenshot, (1000, 1000) is the BOTTOM-RIGHT corner. ")
+        append("x = 1000 * targetCenterX / imageWidth, y = 1000 * targetCenterY / imageHeight. ")
+        append("Always aim at the CENTER of the target element. NEVER output raw pixel coordinates of the image.\n\n")
+
         append("#### Atomic Actions ####\n")
         append("- click(coordinate): Click at (x, y). Example: {\"action\": \"click\", \"coordinate\": [x, y]}\n")
         append("- double_tap(coordinate): Double tap at (x, y) for zoom or like. Example: {\"action\": \"double_tap\", \"coordinate\": [x, y]}\n")
@@ -74,6 +90,19 @@ Text Related:
         append("Example: {\"action\": \"click\", \"coordinate\": [500, 800], \"message\": \"确认支付 ¥100\"}\n")
         append("The user will see a confirmation dialog and can choose to confirm or cancel.\n")
         append("\n")
+
+        if (infoPool.uiElements.isNotEmpty()) {
+            append("#### UI Elements (accessibility tree — the REAL elements currently on screen) ####\n")
+            append("The list below is extracted from the system's accessibility tree. The @ position is each element's center in the same 0-1000 coordinates as the screenshot. Indices are valid ONLY for this step's list — the list is refreshed every step.\n")
+            append("${infoPool.uiElements}\n\n")
+            append("STRONGLY PREFER index actions for listed elements — they act on the exact element itself and cannot miss:\n")
+            append("- Click by index: {\"action\": \"click\", \"index\": 12}\n")
+            append("- Long press by index: {\"action\": \"long_press\", \"index\": 12}\n")
+            append("- Double tap by index: {\"action\": \"double_tap\", \"index\": 12}\n")
+            append("- Type directly into a listed input field (no need to click it first): {\"action\": \"type\", \"index\": 5, \"text\": \"...\"}\n")
+            append("Use coordinate actions ONLY for targets that are NOT in the list (images, game/canvas areas, web content without accessibility elements).\n")
+            append("\n")
+        }
 
         append("### Latest Action History ###\n")
         if (infoPool.actionHistory.isNotEmpty()) {

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- App Name -->
-    <string name="app_name">肉包</string>
+    <string name="app_name">伴语</string>
 
     <!-- Tab Titles -->
-    <string name="tab_home">肉包</string>
+    <string name="tab_home">崩沙卡拉卡</string>
     <string name="tab_history">记录</string>
     <string name="tab_settings">设置</string>
 
@@ -157,4 +157,7 @@
     <string name="toast_sensitive_page">检测到敏感页面（支付/密码），已安全停止</string>
     <string name="toast_max_steps">达到最大步数限制</string>
     <string name="toast_error">错误: %1$s</string>
+
+    <!-- Accessibility -->
+    <string name="accessibility_service_description">开启后，伴语可通过无障碍服务执行点击、滑动、返回、输入文字和截图（Android 11+），作为 Shizuku 之外的控制方式。</string>
 </resources>

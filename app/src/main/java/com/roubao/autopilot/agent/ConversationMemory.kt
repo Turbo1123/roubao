@@ -141,11 +141,19 @@ class ConversationMemory {
     }
 
     /**
-     * Bitmap 转 Base64
+     * Bitmap 转 Base64（先缩小到 1280 以内，原图上传太慢；相对坐标不受影响）
      */
     private fun bitmapToBase64(bitmap: Bitmap): String {
+        val scaled = if (bitmap.width > 1280 || bitmap.height > 1280) {
+            val ratio = minOf(1280f / bitmap.width, 1280f / bitmap.height)
+            val newWidth = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+            val newHeight = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+            Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        } else {
+            bitmap
+        }
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, outputStream)
+        scaled.compress(Bitmap.CompressFormat.JPEG, 70, outputStream)
         val bytes = outputStream.toByteArray()
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }

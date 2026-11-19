@@ -114,6 +114,39 @@ class VLMClient(
     /**
      * 调用 VLM 进行多模态推理 (带重试)
      */
+    /** 接口返回了内容但不是正常回复时抛出，携带接口那边的真实错误信息 */
+    private class ApiResponseException(message: String) : Exception(message)
+
+    /**
+     * 从接口返回体里提取模型回复文本。
+     * 有些接口出错时 HTTP 仍返回 200，但内容里没有 choices、只有 error，
+     * 以前只会报一句看不懂的 "No value for choices"，现在把真实原因带出来。
+     */
+    private fun extractContent(responseBody: String): String {
+        val json = try {
+            JSONObject(responseBody)
+        } catch (e: Exception) {
+            throw ApiResponseException("接口返回的不是有效 JSON: ${responseBody.take(200)}")
+        }
+        val error = json.optJSONObject("error")
+        if (error != null) {
+            val msg = error.optString("message").ifBlank { error.toString() }
+            throw ApiResponseException("接口返回错误: $msg")
+        }
+        val choices = json.optJSONArray("choices")
+        if (choices == null || choices.length() == 0) {
+            throw ApiResponseException("接口没有返回正常回复，原始返回: ${responseBody.take(200)}")
+        }
+        val message = choices.getJSONObject(0).optJSONObject("message")
+            ?: throw ApiResponseException("接口回复缺少 message 字段")
+        val content = message.optString("content")
+        if (content.isNotBlank()) return content
+        // 部分推理模型把正文放在 reasoning_content 里
+        val reasoning = message.optString("reasoning_content")
+        if (reasoning.isNotBlank()) return reasoning
+        throw ApiResponseException("接口回复内容为空")
+    }
+
     suspend fun predict(
         prompt: String,
         images: List<Bitmap> = emptyList()
@@ -150,7 +183,7 @@ class VLMClient(
                 val requestBody = JSONObject().apply {
                     put("model", model)
                     put("messages", messages)
-                    put("max_tokens", 4096)
+                    put("max_tokens", 8192)
                     put("temperature", 0.0)
                     put("top_p", 0.85)
                     put("frequency_penalty", 0.2)  // 减少重复输出
@@ -171,15 +204,7 @@ class VLMClient(
                 val responseBody = response.body?.string() ?: ""
 
                 if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val choices = json.getJSONArray("choices")
-                    if (choices.length() > 0) {
-                        val message = choices.getJSONObject(0).getJSONObject("message")
-                        val responseContent = message.getString("content")
-                        return@withContext Result.success(responseContent)
-                    } else {
-                        lastException = Exception("No response from model")
-                    }
+                    return@withContext Result.success(extractContent(responseBody))
                 } else {
                     lastException = Exception("API error: ${response.code} - $responseBody")
                 }
@@ -200,6 +225,13 @@ class VLMClient(
             } catch (e: java.io.IOException) {
                 // IO 错误，重试
                 println("[VLMClient] IO 错误: ${e.message}，重试 $attempt/$MAX_RETRIES...")
+                lastException = e
+                if (attempt < MAX_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
+                }
+            } catch (e: ApiResponseException) {
+                // 接口返回了错误内容（限流/额度/临时故障等），重试几次再放弃
+                println("[VLMClient] ${e.message}，重试 $attempt/$MAX_RETRIES...")
                 lastException = e
                 if (attempt < MAX_RETRIES) {
                     delay(RETRY_DELAY_MS * attempt)
@@ -227,7 +259,7 @@ class VLMClient(
                 val requestBody = JSONObject().apply {
                     put("model", model)
                     put("messages", messagesJson)
-                    put("max_tokens", 4096)
+                    put("max_tokens", 8192)
                     put("temperature", 0.0)
                 }
 
@@ -246,15 +278,7 @@ class VLMClient(
                 val responseBody = response.body?.string() ?: ""
 
                 if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val choices = json.getJSONArray("choices")
-                    if (choices.length() > 0) {
-                        val message = choices.getJSONObject(0).getJSONObject("message")
-                        val responseContent = message.getString("content")
-                        return@withContext Result.success(responseContent)
-                    } else {
-                        lastException = Exception("No response from model")
-                    }
+                    return@withContext Result.success(extractContent(responseBody))
                 } else {
                     lastException = Exception("API error: ${response.code} - $responseBody")
                 }
@@ -276,6 +300,13 @@ class VLMClient(
                 if (attempt < MAX_RETRIES) {
                     delay(RETRY_DELAY_MS * attempt)
                 }
+            } catch (e: ApiResponseException) {
+                // 接口返回了错误内容（限流/额度/临时故障等），重试几次再放弃
+                println("[VLMClient] ${e.message}，重试 $attempt/$MAX_RETRIES...")
+                lastException = e
+                if (attempt < MAX_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
+                }
             } catch (e: Exception) {
                 return@withContext Result.failure(e)
             }
@@ -288,12 +319,59 @@ class VLMClient(
      * Bitmap 转 Base64 URL (只压缩质量，不压缩分辨率)
      * 保持原始分辨率以确保坐标准确
      */
+    /**
+     * 多轮对话补全（角色扮演聊天用）：直接传入完整的 messages JSON，可指定温度
+     */
+    suspend fun chatCompletion(
+        messagesJson: JSONArray,
+        temperature: Double = 0.8
+    ): Result<String> = withContext(Dispatchers.IO) {
+        var lastException: Exception? = null
+
+        for (attempt in 1..MAX_RETRIES) {
+            try {
+                val requestBody = JSONObject().apply {
+                    put("model", model)
+                    put("messages", messagesJson)
+                    put("max_tokens", 8192)
+                    put("temperature", temperature)
+                }
+
+                val request = Request.Builder()
+                    .url("$baseUrl/chat/completions")
+                    .apply {
+                        if (apiKey.isNotBlank()) {
+                            addHeader("Authorization", "Bearer $apiKey")
+                        }
+                    }
+                    .addHeader("Content-Type", "application/json")
+                    .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+
+                if (response.isSuccessful) {
+                    return@withContext Result.success(extractContent(responseBody))
+                } else {
+                    lastException = Exception("API error: ${response.code} - $responseBody")
+                }
+            } catch (e: Exception) {
+                lastException = e
+            }
+        }
+
+        Result.failure(lastException ?: Exception("Unknown error"))
+    }
+
     private fun bitmapToBase64Url(bitmap: Bitmap): String {
         val outputStream = ByteArrayOutputStream()
-        // 使用 JPEG 格式，质量 70%，保持原始分辨率
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, outputStream)
+        // 先把截图缩小到 1280 以内再编码：原图（如 1080x2400）上传和推理都很慢，
+        // 模型用的是相对坐标，缩小不影响点击精度
+        val scaled = resizeBitmap(bitmap, 1280, 1280)
+        scaled.compress(Bitmap.CompressFormat.JPEG, 70, outputStream)
         val bytes = outputStream.toByteArray()
-        println("[VLMClient] 图片压缩: ${bitmap.width}x${bitmap.height}, ${bytes.size / 1024}KB")
+        println("[VLMClient] 图片压缩: ${scaled.width}x${scaled.height}, ${bytes.size / 1024}KB")
         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
         return "data:image/jpeg;base64,$base64"
     }

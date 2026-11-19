@@ -40,6 +40,12 @@ data class InfoPool(
     // 额外知识
     var additionalKnowledge: String = "",
 
+    // 用户自定义系统提示词（设置中可修改，为空时使用默认提示词）
+    var customSystemPrompt: String = "",
+
+    // 跨会话长期记忆（之前任务的摘要，注入提示词以保持连贯）
+    var longTermMemory: String = "",
+
     // Skill 上下文（从 SkillManager 获取的相关技能信息）
     var skillContext: String = "",
 
@@ -47,7 +53,10 @@ data class InfoPool(
     var executorMemory: ConversationMemory? = null,
 
     // 已安装应用列表（用于 open_app 动作）
-    var installedApps: String = ""
+    var installedApps: String = "",
+
+    // 当前屏幕的元素树清单（无障碍感知，格式化后的文本，注入 Executor 提示词）
+    var uiElements: String = ""
 )
 
 /**
@@ -69,6 +78,7 @@ data class Action(
     val y: Int? = null,
     val x2: Int? = null,
     val y2: Int? = null,
+    val index: Int? = null,          // 元素树清单序号（按序号直达节点，优先于坐标）
     val text: String? = null,
     val button: String? = null,      // Back, Home, Enter, menu
     val duration: Int? = null,       // wait 动作的等待时长（秒）
@@ -114,6 +124,7 @@ data class Action(
                     y = obj.optJSONArray("coordinate")?.optInt(1),
                     x2 = obj.optJSONArray("coordinate2")?.optInt(0),
                     y2 = obj.optJSONArray("coordinate2")?.optInt(1),
+                    index = if (obj.has("index")) obj.optInt("index", -1).takeIf { it >= 0 } else null,
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
                     duration = if (obj.has("duration")) obj.optInt("duration", 3) else null,
@@ -213,6 +224,7 @@ data class Action(
             coord2.put(y2)
             obj.put("coordinate2", coord2)
         }
+        index?.let { obj.put("index", it) }
         text?.let { obj.put("text", it) }
         button?.let { obj.put("button", it) }
         duration?.let { obj.put("duration", it) }

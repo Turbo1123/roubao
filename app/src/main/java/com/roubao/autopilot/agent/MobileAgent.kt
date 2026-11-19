@@ -2,11 +2,15 @@ package com.roubao.autopilot.agent
 
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.graphics.Bitmap
 import com.roubao.autopilot.App
+import com.roubao.autopilot.controller.AccessibilityBridge
+import com.roubao.autopilot.controller.AdbBridge
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
+import com.roubao.autopilot.data.SettingsManager
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
@@ -80,6 +84,35 @@ class MobileAgent(
         maxSteps: Int = 25,
         useNotetaker: Boolean = false
     ): AgentResult {
+        // 操控期间保持屏幕常亮：申请 WakeLock，避免自动熄屏打断任务（结束/取消都会释放）
+        val wakeLock = try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            powerManager?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                "BengshaKalaka:AgentControl"
+            )?.apply { acquire(30 * 60 * 1000L) }
+        } catch (e: Exception) {
+            println("[MobileAgent] WakeLock 申请失败: ${e.message}")
+            null
+        }
+        try {
+            return runInstructionInternal(instruction, maxSteps, useNotetaker)
+        } finally {
+            try {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock.release()
+                }
+            } catch (e: Exception) {
+                // 忽略释放异常
+            }
+        }
+    }
+
+    private suspend fun runInstructionInternal(
+        instruction: String,
+        maxSteps: Int = 25,
+        useNotetaker: Boolean = false
+    ): AgentResult {
         log("开始执行: $instruction")
 
         // 根据模式选择执行路径
@@ -107,10 +140,44 @@ class MobileAgent(
 
         val infoPool = InfoPool(instruction = instruction)
 
+        // 读取用户自定义系统提示词（为空时使用默认提示词）
+        val settingsManager = SettingsManager(context)
+        val appSettings = settingsManager.settings.value
+        val customSystemPrompt = appSettings.customSystemPrompt
+        infoPool.customSystemPrompt = customSystemPrompt
+
+        // 长期记忆攒到 8000 字时，用模型压缩：其中最新 10% 保留原文，其余压缩成摘要
+        var effectiveMemory = appSettings.longTermMemory
+        if (effectiveMemory.length >= 8000) {
+            try {
+                log("长期记忆已达 ${effectiveMemory.length} 字，正在用模型压缩…")
+                val compressed = compressLongTermMemory(effectiveMemory)
+                if (compressed != null) {
+                    settingsManager.updateLongTermMemory(compressed)
+                    effectiveMemory = compressed
+                    log("长期记忆压缩完成，现为 ${compressed.length} 字")
+                }
+            } catch (e: Exception) {
+                log("长期记忆压缩失败，使用原文: ${e.message}")
+            }
+        }
+        infoPool.longTermMemory = effectiveMemory
+
         // 初始化 Executor 的对话记忆
         val executorSystemPrompt = buildString {
-            append("You are an agent who can operate an Android phone. ")
-            append("Decide the next action based on the current state.\n\n")
+            if (customSystemPrompt.isNotBlank()) {
+                append(customSystemPrompt.trim())
+                append("\n\n")
+            } else {
+                append("You are an agent who can operate an Android phone. ")
+                append("Decide the next action based on the current state.\n\n")
+            }
+            if (effectiveMemory.isNotBlank()) {
+                append("### Long-term Memory ###\n")
+                append("以下是你与用户在之前会话中的互动记忆，请保持角色、关系与记忆的连贯性：\n")
+                append(effectiveMemory.trim())
+                append("\n\n")
+            }
             append("User Request: $instruction\n")
         }
         infoPool.executorMemory = ConversationMemory.withSystemPrompt(executorSystemPrompt)
@@ -149,6 +216,23 @@ class MobileAgent(
 
         updateState { copy(isRunning = true, currentStep = 0, instruction = instruction) }
 
+        // 模型接口连续失败计数：连续 3 次失败就终止任务并说明原因，不再空转刷步数
+        var consecutiveApiFailures = 0
+
+        // 上一步的动作后截图：下一步直接复用，省去一次截图耗时
+        var carriedScreenshot: DeviceController.ScreenshotResult? = null
+
+        // ADB 模式：任务开始前先把无线调试连接建立好（配对过一次后自动发现端口重连）
+        if (controller.isAdbMode()) {
+            log("ADB 模式：正在连接本机 ADB…")
+            val adbOk = withContext(Dispatchers.IO) { AdbBridge.connectNow(15000) }
+            if (adbOk) {
+                log("ADB 已连接")
+            } else {
+                log("⚠️ ADB 未连接：请先到 设置 → 控制方式 → ADB 里完成配对与连接（需打开无线调试）")
+            }
+        }
+
         try {
             for (step in 0 until maxSteps) {
                 // 检查协程是否被取消
@@ -166,13 +250,33 @@ class MobileAgent(
                 log("\n========== Step ${step + 1} ==========")
                 OverlayService.update("Step ${step + 1}/$maxSteps")
 
-                // 1. 截图 (先隐藏悬浮窗避免被识别)
-                log("截图中...")
-                OverlayService.setVisible(false)
-                delay(100) // 等待悬浮窗隐藏
-                val screenshotResult = controller.screenshotWithFallback()
-                OverlayService.setVisible(true)
+                val stepT0 = System.currentTimeMillis()
+
+                // 1. 截图：优先复用上一步的动作后截图（省一次截图耗时）；没有可复用的才重新截
+                val carried = carriedScreenshot
+                carriedScreenshot = null
+                val screenshotResult: DeviceController.ScreenshotResult
+                if (carried != null) {
+                    log("复用上一步截图，跳过重复截图")
+                    screenshotResult = carried
+                } else {
+                    log("截图中...")
+                    OverlayService.setVisible(false)
+                    delay(100) // 等待悬浮窗隐藏
+                    screenshotResult = controller.screenshotWithFallback()
+                    OverlayService.setVisible(true)
+                }
                 val screenshot = screenshotResult.bitmap
+
+                // 坐标换算以模型实际看到的截图尺寸为准：无障碍上报的屏幕尺寸可能不含导航栏，
+                // 与截图高度对不上时点击会整体偏移
+                if (!screenshotResult.isFallback && screenshot.width > 0 && screenshot.height > 0 &&
+                    (infoPool.screenWidth != screenshot.width || infoPool.screenHeight != screenshot.height)
+                ) {
+                    infoPool.screenWidth = screenshot.width
+                    infoPool.screenHeight = screenshot.height
+                }
+                val stepT1 = System.currentTimeMillis()
 
                 // 处理敏感页面（截图被系统阻止）
                 if (screenshotResult.isSensitive) {
@@ -197,6 +301,28 @@ class MobileAgent(
                     OverlayService.hide(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
+                }
+
+                // 1.5 元素树感知（借鉴 droidrun / dsh-go 的「无障碍树优先」）：
+                // 无障碍已连接时抓取当前窗口的元素清单，执行器可按序号直达真实节点，
+                // 点击不再依赖截图坐标换算；无元素（游戏/网页画布等）时自动回退到坐标方式。
+                if (AccessibilityBridge.isConnected()) {
+                    try {
+                        val elements = AccessibilityBridge.snapshotElements()
+                        infoPool.uiElements = if (elements.isEmpty()) {
+                            ""
+                        } else {
+                            formatUiElements(elements, infoPool.screenWidth, infoPool.screenHeight)
+                        }
+                        if (elements.isNotEmpty()) {
+                            log("元素树: ${elements.size} 个元素")
+                        }
+                    } catch (e: Exception) {
+                        infoPool.uiElements = ""
+                        log("元素树抓取失败: ${e.message}")
+                    }
+                } else {
+                    infoPool.uiElements = ""
                 }
 
                 // 2. 检查错误升级
@@ -231,9 +357,22 @@ class MobileAgent(
                     }
 
                     if (planResponse.isFailure) {
-                        log("Manager 调用失败: ${planResponse.exceptionOrNull()?.message}")
+                        consecutiveApiFailures++
+                        val errMsg = planResponse.exceptionOrNull()?.message ?: "未知错误"
+                        log("Manager 调用失败: $errMsg")
+                        if (consecutiveApiFailures >= 3) {
+                            log("模型接口连续 $consecutiveApiFailures 次调用失败，任务终止")
+                            OverlayService.update("接口连续失败，已停止")
+                            delay(1500)
+                            OverlayService.hide(context)
+                            updateState { copy(isRunning = false, isCompleted = false) }
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "模型接口连续调用失败：$errMsg。请检查 API 地址、Key、额度，或稍后重试")
+                        }
+                        delay(1000)
                         continue
                     }
+                    consecutiveApiFailures = 0
 
                     val planResult = manager.parseResponse(planResponse.getOrThrow())
                     infoPool.completedPlan = planResult.completedSubgoal
@@ -263,6 +402,8 @@ class MobileAgent(
                         return AgentResult(success = true, message = "任务完成")
                     }
                 }
+
+                val stepT2 = System.currentTimeMillis()
 
                 // 5. Executor 决定动作 (使用上下文记忆)
                 log("Executor 决策中...")
@@ -305,9 +446,22 @@ class MobileAgent(
                 }
 
                 if (actionResponse.isFailure) {
-                    log("Executor 调用失败: ${actionResponse.exceptionOrNull()?.message}")
+                    consecutiveApiFailures++
+                    val errMsg = actionResponse.exceptionOrNull()?.message ?: "未知错误"
+                    log("Executor 调用失败: $errMsg")
+                    if (consecutiveApiFailures >= 3) {
+                        log("模型接口连续 $consecutiveApiFailures 次调用失败，任务终止")
+                        OverlayService.update("接口连续失败，已停止")
+                        delay(1500)
+                        OverlayService.hide(context)
+                        updateState { copy(isRunning = false, isCompleted = false) }
+                        bringAppToFront()
+                        return AgentResult(success = false, message = "模型接口连续调用失败：$errMsg。请检查 API 地址、Key、额度，或稍后重试")
+                    }
+                    delay(1000)
                     continue
                 }
+                consecutiveApiFailures = 0
 
                 val responseText = actionResponse.getOrThrow()
                 val executorResult = executor.parseResponse(responseText)
@@ -315,6 +469,7 @@ class MobileAgent(
                 // 将助手响应添加到记忆
                 memory?.addAssistantMessage(responseText)
                 val action = executorResult.action
+                val stepT3 = System.currentTimeMillis()
 
                 log("思考: ${executorResult.thought.take(80)}...")
                 log("动作: ${executorResult.actionStr}")
@@ -393,8 +548,8 @@ class MobileAgent(
                 )
                 updateState { copy(executionSteps = executionSteps + executionStep) }
 
-                // 等待动作生效
-                delay(if (step == 0) 5000 else 2000)
+                // 等待动作生效（界面通常几百毫秒内稳定，过长等待是单步慢的主因之一）
+                delay(if (step == 0) 1500 else 550)
 
                 // 检查停止状态
                 if (!_state.value.isRunning) {
@@ -414,10 +569,8 @@ class MobileAgent(
                     log("动作后截图失败，使用黑屏占位图")
                 }
 
-                // 9. Reflector 反思
-                log("Reflector 反思中...")
-
-                // 检查停止状态
+                // 9. 本地校验动作效果（替代原来每步一次的 Reflector 模型调用，省一次 API 往返）：
+                //    对比动作前后截图，点完画面完全没变基本就是没点中或页面未响应
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
                     OverlayService.hide(context)
@@ -425,22 +578,16 @@ class MobileAgent(
                     return AgentResult(success = false, message = "用户停止")
                 }
 
-                val reflectPrompt = reflector.getPrompt(infoPool)
-                val reflectResponse = vlmClient.predict(reflectPrompt, listOf(screenshot, afterScreenshot))
-
-                val reflectResult = if (reflectResponse.isSuccess) {
-                    reflector.parseResponse(reflectResponse.getOrThrow())
-                } else {
-                    ReflectorResult("C", "Failed to call reflector")
-                }
-
-                log("结果: ${reflectResult.outcome} - ${reflectResult.errorDescription.take(50)}")
+                val (outcome, outcomeError) = verifyActionEffect(
+                    action, screenshot, afterScreenshot, afterScreenshotResult.isFallback
+                )
+                log("结果: $outcome${if (outcomeError.isNotEmpty()) " - $outcomeError" else ""}")
 
                 // 更新历史
                 infoPool.actionHistory.add(action)
                 infoPool.summaryHistory.add(executorResult.description)
-                infoPool.actionOutcomes.add(reflectResult.outcome)
-                infoPool.errorDescriptions.add(reflectResult.errorDescription)
+                infoPool.actionOutcomes.add(outcome)
+                infoPool.errorDescriptions.add(outcomeError)
                 infoPool.progressStatus = infoPool.completedPlan
 
                 // 更新执行步骤的 outcome（之前添加的步骤 outcome 是 "?"）
@@ -448,14 +595,23 @@ class MobileAgent(
                     val updatedSteps = executionSteps.toMutableList()
                     if (currentStepIndex < updatedSteps.size) {
                         updatedSteps[currentStepIndex] = updatedSteps[currentStepIndex].copy(
-                            outcome = reflectResult.outcome
+                            outcome = outcome
                         )
                     }
                     copy(executionSteps = updatedSteps)
                 }
 
+                // 本步耗时分布：定位慢在哪一段（截图 / 规划 / 决策 / 执行校验）
+                val stepEndMs = System.currentTimeMillis()
+                log("⏱ 本步耗时: 截图 ${stepT1 - stepT0}ms, 规划 ${stepT2 - stepT1}ms, 决策 ${stepT3 - stepT2}ms, 执行+校验 ${stepEndMs - stepT3}ms")
+
+                // 动作后截图留给下一步复用（失败占位图不复用）
+                if (!afterScreenshotResult.isFallback && !afterScreenshotResult.isSensitive) {
+                    carriedScreenshot = afterScreenshotResult
+                }
+
                 // 10. Notetaker (可选)
-                if (useNotetaker && reflectResult.outcome == "A" && action.type != "answer") {
+                if (useNotetaker && outcome == "A" && action.type != "answer") {
                     log("Notetaker 记录中...")
 
                     // 检查停止状态
@@ -488,6 +644,51 @@ class MobileAgent(
         updateState { copy(isRunning = false, isCompleted = false) }
         bringAppToFront()
         return AgentResult(success = false, message = "达到最大步数限制")
+    }
+
+    /**
+     * 用模型压缩长期记忆：最新的约 10% 保留原文，其余部分（约 90%）总结成摘要。
+     * 压缩失败返回 null，调用方回退到原文。
+     */
+    private suspend fun compressLongTermMemory(memory: String): String? {
+        // 保留最新约 10%：从 90% 处往后找第一个完整的【任务】条目边界
+        val keepTarget = memory.length - (memory.length * 0.10).toInt()
+        var splitIdx = memory.indexOf("【任务】", keepTarget)
+        if (splitIdx < 0) {
+            splitIdx = keepTarget
+        }
+        val oldPart = memory.substring(0, splitIdx).trim()
+        val recentPart = memory.substring(splitIdx).trim()
+        if (oldPart.isBlank()) {
+            return null
+        }
+
+        val prompt = buildString {
+            append("你是一个记忆压缩助手。请把下面这段「用户与角色的互动记忆」压缩成简洁的摘要，要求：\n")
+            append("1) 保留用户的偏好、习惯与重要信息；\n")
+            append("2) 保留角色与用户的关系进展和共同经历的关键事件；\n")
+            append("3) 保留未完成的话题、约定与承诺；\n")
+            append("4) 删除重复和琐碎的操作细节；\n")
+            append("5) 用条目式短句输出，总长度不超过原文的三分之一。只输出摘要正文，不要解释。\n\n")
+            append("原文：\n")
+            append(oldPart)
+        }
+
+        val client = vlmClient ?: return null
+        val result = client.predict(prompt)
+        val digest = result.getOrNull()?.trim()
+        if (digest.isNullOrBlank() || digest.length >= oldPart.length) {
+            return null
+        }
+
+        return buildString {
+            append("【记忆摘要（较早的互动，已由模型压缩）】\n")
+            append(digest)
+            if (recentPart.isNotBlank()) {
+                append("\n\n")
+                append(recentPart)
+            }
+        }
     }
 
     /**
@@ -604,7 +805,7 @@ class MobileAgent(
                 }
 
                 // 等待动作生效
-                delay(if (step == 0) 3000 else 1500)
+                delay(if (step == 0) 1500 else 700)
             }
         } catch (e: CancellationException) {
             log("任务被取消")
@@ -826,7 +1027,7 @@ class MobileAgent(
                 }
 
                 // 等待动作生效
-                delay(if (step == 0) 2000 else 1000)
+                delay(if (step == 0) 1200 else 700)
             }
         } catch (e: CancellationException) {
             log("任务被取消")
@@ -957,24 +1158,49 @@ class MobileAgent(
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool) = withContext(Dispatchers.IO) {
-        // 动态获取屏幕尺寸（处理横竖屏切换）
-        val (screenWidth, screenHeight) = controller.getScreenSize()
+        // 优先用截图的实际尺寸（与模型看到的画面一致）；没有时再动态获取屏幕尺寸（处理横竖屏切换）
+        val (screenWidth, screenHeight) = if (infoPool.screenWidth > 0 && infoPool.screenHeight > 0) {
+            Pair(infoPool.screenWidth, infoPool.screenHeight)
+        } else {
+            controller.getScreenSize()
+        }
+        // 模型看到的截图尺寸（发送前缩小到 1280 以内）：用于识别模型按像素坐标输出的情况
+        val (modelWidth, modelHeight) = modelImageSize(screenWidth, screenHeight)
 
         when (action.type) {
             "click" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
-                controller.tap(x, y)
+                // 元素序号优先：对无障碍节点直接执行点击，绕开坐标换算，不可能点偏
+                val idx = action.index
+                if (idx != null && AccessibilityBridge.clickElement(idx)) {
+                    log("元素点击 #$idx 成功（节点直达）")
+                } else {
+                    if (idx != null) log("元素点击 #$idx 未成功，回退坐标点击")
+                    val x = mapPoint(action.x ?: 0, screenWidth, modelWidth)
+                    val y = mapPoint(action.y ?: 0, screenHeight, modelHeight)
+                    controller.tap(x, y)
+                }
             }
             "double_tap" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
-                controller.doubleTap(x, y)
+                val idx = action.index
+                if (idx != null && AccessibilityBridge.doubleTapElement(idx)) {
+                    log("元素双击 #$idx 成功（节点直达）")
+                } else {
+                    if (idx != null) log("元素双击 #$idx 未成功，回退坐标双击")
+                    val x = mapPoint(action.x ?: 0, screenWidth, modelWidth)
+                    val y = mapPoint(action.y ?: 0, screenHeight, modelHeight)
+                    controller.doubleTap(x, y)
+                }
             }
             "long_press" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
-                controller.longPress(x, y)
+                val idx = action.index
+                if (idx != null && AccessibilityBridge.longClickElement(idx)) {
+                    log("元素长按 #$idx 成功（节点直达）")
+                } else {
+                    if (idx != null) log("元素长按 #$idx 未成功，回退坐标长按")
+                    val x = mapPoint(action.x ?: 0, screenWidth, modelWidth)
+                    val y = mapPoint(action.y ?: 0, screenHeight, modelHeight)
+                    controller.longPress(x, y)
+                }
             }
             "swipe" -> {
                 // 支持两种 swipe 方式:
@@ -982,8 +1208,8 @@ class MobileAgent(
                 // 2. 方向方式: direction (up/down/left/right) + optional coordinate
                 if (action.direction != null) {
                     // 方向方式 (MAI-UI 格式)
-                    val centerX = action.x?.let { mapCoordinate(it, screenWidth) } ?: (screenWidth / 2)
-                    val centerY = action.y?.let { mapCoordinate(it, screenHeight) } ?: (screenHeight / 2)
+                    val centerX = action.x?.let { mapPoint(it, screenWidth, modelWidth) } ?: (screenWidth / 2)
+                    val centerY = action.y?.let { mapPoint(it, screenHeight, modelHeight) } ?: (screenHeight / 2)
                     val distance = 400  // 滑动距离
                     when (action.direction.lowercase()) {
                         "up" -> controller.swipe(centerX, centerY + distance, centerX, centerY - distance)
@@ -994,15 +1220,23 @@ class MobileAgent(
                     }
                 } else {
                     // 坐标方式
-                    val x1 = mapCoordinate(action.x ?: 0, screenWidth)
-                    val y1 = mapCoordinate(action.y ?: 0, screenHeight)
-                    val x2 = mapCoordinate(action.x2 ?: 0, screenWidth)
-                    val y2 = mapCoordinate(action.y2 ?: 0, screenHeight)
+                    val x1 = mapPoint(action.x ?: 0, screenWidth, modelWidth)
+                    val y1 = mapPoint(action.y ?: 0, screenHeight, modelHeight)
+                    val x2 = mapPoint(action.x2 ?: 0, screenWidth, modelWidth)
+                    val y2 = mapPoint(action.y2 ?: 0, screenHeight, modelHeight)
                     controller.swipe(x1, y1, x2, y2)
                 }
             }
             "type" -> {
-                action.text?.let { controller.type(it) }
+                // 带序号时直接给目标输入框设置文本（不依赖键盘弹出与剪贴板），失败再走原输入路径
+                val idx = action.index
+                val text = action.text
+                if (idx != null && text != null && AccessibilityBridge.setTextOnElement(idx, text)) {
+                    log("元素输入 #$idx 成功（节点直达）")
+                } else {
+                    if (idx != null) log("元素输入 #$idx 未成功，回退常规输入")
+                    text?.let { controller.type(it) }
+                }
             }
             "system_button" -> {
                 when (action.button) {
@@ -1072,22 +1306,109 @@ class MobileAgent(
     }
 
     /**
-     * 坐标映射 - 支持相对坐标和绝对坐标
-     *
-     * 坐标格式判断:
-     * - 0-999: Qwen-VL 相对坐标 (0-999 映射到屏幕)
-     * - >= 1000: 绝对像素坐标，直接使用
+     * 把元素树清单格式化成提示词文本：序号、标签、类型、可交互标记，
+     * 以及元素中心在 0-1000 相对坐标中的位置（与截图坐标系一致，方便模型对照画面）。
+     */
+    private fun formatUiElements(
+        elements: List<com.roubao.autopilot.service.UiElementInfo>,
+        screenWidth: Int,
+        screenHeight: Int
+    ): String {
+        val w = screenWidth.coerceAtLeast(1)
+        val h = screenHeight.coerceAtLeast(1)
+        return elements.joinToString("\n") { el ->
+            val cx = el.bounds.centerX() * 1000 / w
+            val cy = el.bounds.centerY() * 1000 / h
+            val flags = buildList {
+                if (el.clickable) add("clickable")
+                if (el.longClickable) add("long-clickable")
+                if (el.editable) add("editable")
+                if (el.scrollable) add("scrollable")
+            }.joinToString(" ")
+            val label = el.label.replace("\n", " ").take(40)
+            "[$cx,$cy]".let { pos ->
+                "[${el.index}] \"$label\" ${el.className} $flags @$pos"
+            }
+        }
+    }
+
+    /**
+     * 模型实际看到的截图尺寸：截图发送前会被等比缩小到 1280 以内
+     * （与 VLMClient.resizeBitmap 同一规则），由此推算模型视角的图像宽高。
+     */
+    private fun modelImageSize(width: Int, height: Int): Pair<Int, Int> {
+        if (width <= 1280 && height <= 1280) {
+            return Pair(width, height)
+        }
+        val ratio = minOf(1280f / width, 1280f / height)
+        return Pair(
+            (width * ratio).toInt().coerceAtLeast(1),
+            (height * ratio).toInt().coerceAtLeast(1)
+        )
+    }
+
+    /**
+     * 坐标映射 - 兼容两种模型输出约定（提示词约定的是第一种，第二种是兜底）：
+     * - 0~1000：相对坐标，按比例换算到屏幕像素（1000 = 屏幕边缘）
+     * - >1000：模型按「它看到的截图」的像素坐标输出，按截图尺寸换算到屏幕像素
      *
      * @param value 模型输出的坐标值
-     * @param screenMax 屏幕实际尺寸
+     * @param screenMax 屏幕实际尺寸（该轴）
+     * @param modelMax 模型看到的截图尺寸（该轴）
      */
-    private fun mapCoordinate(value: Int, screenMax: Int): Int {
-        return if (value < 1000) {
-            // 相对坐标 (0-999) -> 绝对像素
-            (value * screenMax / 999)
+    private fun mapPoint(value: Int, screenMax: Int, modelMax: Int): Int {
+        val px = if (value > 1000 && modelMax > 0) {
+            value * screenMax / modelMax
         } else {
-            // 绝对坐标，限制在屏幕范围内
-            value.coerceAtMost(screenMax)
+            value.coerceIn(0, 1000) * screenMax / 1000
+        }
+        return px.coerceIn(0, (screenMax - 1).coerceAtLeast(0))
+    }
+
+    /**
+     * 本地校验动作是否生效：把动作前后的截图缩到 32x32 灰度图算平均差异。
+     * 点击类动作执行后画面完全不变（差异极小），基本可判定没点中或页面未响应。
+     * 返回 (outcome, errorDescription)：A = 已生效，B = 疑似未生效。
+     * 用本地图像对比替代原来每步一次的 Reflector 模型调用，省掉一次 API 往返。
+     */
+    private fun verifyActionEffect(
+        action: Action,
+        before: Bitmap,
+        after: Bitmap,
+        afterIsFallback: Boolean
+    ): Pair<String, String> {
+        if (afterIsFallback) {
+            return Pair("A", "")
+        }
+        return when (action.type) {
+            "click", "double_tap", "long_press", "swipe" -> {
+                val diff = screenDiff(before, after)
+                if (diff != null && diff < 0.5) {
+                    Pair("B", "动作后屏幕几乎没有变化（差异 %.2f），可能没有点中或页面未响应".format(diff))
+                } else {
+                    Pair("A", "")
+                }
+            }
+            else -> Pair("A", "")
+        }
+    }
+
+    private fun screenDiff(a: Bitmap, b: Bitmap): Double? {
+        return try {
+            val size = 32
+            val pa = IntArray(size * size)
+            val pb = IntArray(size * size)
+            Bitmap.createScaledBitmap(a, size, size, true).getPixels(pa, 0, size, 0, 0, size, size)
+            Bitmap.createScaledBitmap(b, size, size, true).getPixels(pb, 0, size, 0, 0, size, size)
+            var sum = 0.0
+            for (i in pa.indices) {
+                val ga = ((pa[i] shr 16 and 0xFF) + (pa[i] shr 8 and 0xFF) + (pa[i] and 0xFF)) / 3
+                val gb = ((pb[i] shr 16 and 0xFF) + (pb[i] shr 8 and 0xFF) + (pb[i] and 0xFF)) / 3
+                sum += kotlin.math.abs(ga - gb)
+            }
+            sum / pa.size
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -1129,16 +1450,12 @@ class MobileAgent(
     }
 
     /**
-     * 返回肉包App
+     * 任务结束后的收尾：按用户要求（2026-11-19）不再返回伴语 App，
+     * 干完就停留在当前页面，所以这里什么都不做。
+     * （原实现会把 App 拉回前台，已去掉；30 多处退出路径都走这里，一处生效。）
      */
     private fun bringAppToFront() {
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            log("返回App失败: ${e.message}")
-        }
+        // no-op: stay on the current page after the task finishes
     }
 
     private fun log(message: String) {

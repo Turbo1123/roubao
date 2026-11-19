@@ -110,6 +110,30 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
+     * 是否使用无障碍方式执行操作
+     * 条件：设置中「控制方式」为无障碍，且无障碍服务已连接
+     */
+    private fun useAccessibility(): Boolean {
+        if (!AccessibilityBridge.isConnected()) {
+            return false
+        }
+        val ctx = context ?: return false
+        val mode = ctx.getSharedPreferences("baozi_settings", Context.MODE_PRIVATE)
+            .getString("control_mode", null)
+        return mode == "ACCESSIBILITY"
+    }
+
+    /**
+     * 当前控制方式是否为本机 ADB（无线调试自连）
+     */
+    fun isAdbMode(): Boolean {
+        val ctx = context ?: return false
+        val mode = ctx.getSharedPreferences("baozi_settings", Context.MODE_PRIVATE)
+            .getString("control_mode", null)
+        return mode == "ADB"
+    }
+
+    /**
      * Shizuku 权限级别
      */
     enum class ShizukuPrivilegeLevel {
@@ -157,9 +181,18 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
-     * 执行 shell 命令 (通过 Shizuku)
+     * 执行 shell 命令 (通过 Shizuku；ADB 模式时走本机 ADB 连接)
      */
     private fun exec(command: String): String {
+        if (isAdbMode()) {
+            // ADB 模式只走 ADB 连接，不回退到无权限的本地 shell，避免命令假装执行成功
+            return if (AdbBridge.ensureConnected()) {
+                AdbBridge.exec(command)
+            } else {
+                println("[DeviceController] ADB 未连接，命令未执行: $command")
+                ""
+            }
+        }
         return try {
             shellService?.exec(command) ?: execLocal(command)
         } catch (e: Exception) {
@@ -172,6 +205,10 @@ class DeviceController(private val context: Context? = null) {
      * 点击屏幕
      */
     fun tap(x: Int, y: Int) {
+        if (useAccessibility()) {
+            AccessibilityBridge.tap(x, y)
+            return
+        }
         exec("input tap $x $y")
     }
 
@@ -179,6 +216,10 @@ class DeviceController(private val context: Context? = null) {
      * 长按
      */
     fun longPress(x: Int, y: Int, durationMs: Int = 1000) {
+        if (useAccessibility()) {
+            AccessibilityBridge.longPress(x, y, durationMs)
+            return
+        }
         exec("input swipe $x $y $x $y $durationMs")
     }
 
@@ -186,6 +227,10 @@ class DeviceController(private val context: Context? = null) {
      * 双击
      */
     fun doubleTap(x: Int, y: Int) {
+        if (useAccessibility()) {
+            AccessibilityBridge.doubleTap(x, y)
+            return
+        }
         exec("input tap $x $y && input tap $x $y")
     }
 
@@ -193,6 +238,10 @@ class DeviceController(private val context: Context? = null) {
      * 滑动
      */
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 500) {
+        if (useAccessibility()) {
+            AccessibilityBridge.swipe(x1, y1, x2, y2, durationMs)
+            return
+        }
         exec("input swipe $x1 $y1 $x2 $y2 $durationMs")
     }
 
@@ -200,6 +249,10 @@ class DeviceController(private val context: Context? = null) {
      * 输入文本 (使用剪贴板方式，支持中文)
      */
     fun type(text: String) {
+        if (useAccessibility()) {
+            AccessibilityBridge.typeText(text)
+            return
+        }
         // 检查是否包含非 ASCII 字符
         val hasNonAscii = text.any { it.code > 127 }
 
@@ -305,6 +358,10 @@ class DeviceController(private val context: Context? = null) {
      * 返回键
      */
     fun back() {
+        if (useAccessibility()) {
+            AccessibilityBridge.back()
+            return
+        }
         exec("input keyevent 4")
     }
 
@@ -312,6 +369,10 @@ class DeviceController(private val context: Context? = null) {
      * Home 键
      */
     fun home() {
+        if (useAccessibility()) {
+            AccessibilityBridge.home()
+            return
+        }
         exec("input keyevent 3")
     }
 
@@ -319,6 +380,10 @@ class DeviceController(private val context: Context? = null) {
      * 回车键
      */
     fun enter() {
+        if (useAccessibility()) {
+            AccessibilityBridge.enter()
+            return
+        }
         exec("input keyevent 66")
     }
 
@@ -343,9 +408,45 @@ class DeviceController(private val context: Context? = null) {
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
         try {
+            // ADB 模式：直接通过 ADB 流读取截图字节，不落文件，最快
+            if (isAdbMode()) {
+                if (AdbBridge.ensureConnected()) {
+                    val bytes = AdbBridge.execBytes("screencap -p")
+                    if (bytes.isNotEmpty()) {
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            return@withContext ScreenshotResult(bitmap)
+                        }
+                    }
+                }
+                println("[DeviceController] ADB 截图失败，返回降级图")
+                return@withContext createFallbackScreenshot(isSensitive = false)
+            }
+
+            // 无障碍模式：优先用无障碍服务截图（Android 11+）
+            if (useAccessibility()) {
+                val bitmap = AccessibilityBridge.captureScreenshot()
+                if (bitmap != null) {
+                    return@withContext ScreenshotResult(bitmap)
+                }
+                println("[DeviceController] 无障碍截图失败，尝试 shell 截图兜底")
+            }
+
             // 截图到 /data/local/tmp 并设置权限让 App 可读
             val output = exec("screencap -p $SCREENSHOT_PATH && chmod 666 $SCREENSHOT_PATH")
-            delay(500)
+
+            // 等待截图文件写完：轮询文件大小直到稳定（通常 <150ms），比固定等待 500ms 更快
+            var lastSize = -1L
+            var polls = 0
+            while (polls < 12) {
+                val len = File(SCREENSHOT_PATH).length()
+                if (len > 0 && len == lastSize) {
+                    break
+                }
+                lastSize = len
+                delay(50)
+                polls++
+            }
 
             // 检查是否截图失败（敏感页面保护）
             if (output.contains("Status: -1") || output.contains("Failed") || output.contains("error")) {
@@ -367,7 +468,11 @@ class DeviceController(private val context: Context? = null) {
             println("[DeviceController] Cannot read directly, trying shell cat...")
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "cat $SCREENSHOT_PATH"))
             val bytes = process.inputStream.readBytes()
-            process.waitFor()
+            if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroy()
+                println("[DeviceController] shell cat 超时，放弃该路径")
+                return@withContext createFallbackScreenshot(isSensitive = false)
+            }
 
             if (bytes.isNotEmpty()) {
                 println("[DeviceController] Read ${bytes.size} bytes via shell")
@@ -440,6 +545,9 @@ class DeviceController(private val context: Context? = null) {
      * 获取屏幕尺寸（考虑屏幕方向）
      */
     fun getScreenSize(): Pair<Int, Int> {
+        if (useAccessibility()) {
+            AccessibilityBridge.screenSize()?.let { return it }
+        }
         val output = exec("wm size")
         // 输出格式: Physical size: 1080x2400
         val match = Regex("(\\d+)x(\\d+)").find(output)
@@ -522,6 +630,22 @@ class DeviceController(private val context: Context? = null) {
                 // 找不到，直接用原始输入尝试
                 finalPackage = appNameOrPackage
                 println("[DeviceController] App not found in AppScanner: $appNameOrPackage")
+            }
+        }
+
+        // 无障碍模式：直接通过 Intent 启动应用（不需要 shell 权限）
+        if (useAccessibility()) {
+            val ctx = context ?: App.getInstance()
+            try {
+                val launchIntent = ctx.packageManager.getLaunchIntentForPackage(finalPackage)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ctx.startActivity(launchIntent)
+                    println("[DeviceController] openApp (无障碍): $appNameOrPackage -> $finalPackage")
+                    return
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
