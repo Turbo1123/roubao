@@ -84,6 +84,11 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
+    // 本机 ADB：无线调试自连（设置里配对后，App 直连本机 adbd 执行 shell）
+    implementation("com.github.MuntashirAkon:libadb-android:3.1.0")
+    // ADB 配对凭据的自签证书生成（libadb 只声明了 runtime 依赖，编译期需显式引入）
+    implementation("org.bouncycastle:bcprov-jdk15to18:1.81")
+
     // JSON
     implementation("org.json:json:20231013")
 

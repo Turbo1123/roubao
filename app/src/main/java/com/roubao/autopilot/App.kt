@@ -3,6 +3,7 @@ package com.roubao.autopilot
 import android.app.Application
 import android.content.pm.PackageManager
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.roubao.autopilot.controller.AdbBridge
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.SettingsManager
@@ -40,6 +41,9 @@ class App : Application() {
 
         // 初始化 Shizuku
         Shizuku.addRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
+
+        // 初始化本机 ADB（无线调试）连接管理器，仅准备密钥，不自动连接
+        AdbBridge.init(this)
 
         // 初始化核心组件
         initializeComponents()

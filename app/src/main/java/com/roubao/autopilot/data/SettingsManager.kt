@@ -77,6 +77,15 @@ data class ProviderConfig(
 const val DEFAULT_MODEL = "qwen3-vl-plus"
 
 /**
+ * 设备控制方式
+ */
+enum class ControlMode {
+    SHIZUKU,        // 通过 Shizuku 执行 shell 命令（默认）
+    ACCESSIBILITY,  // 通过无障碍服务执行手势与全局操作
+    ADB             // 通过本机 ADB（无线调试自连）执行 shell 命令
+}
+
+/**
  * 应用设置
  */
 data class AppSettings(
@@ -87,7 +96,10 @@ data class AppSettings(
     val maxSteps: Int = 25,
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
-    val suCommandEnabled: Boolean = false
+    val suCommandEnabled: Boolean = false,
+    val controlMode: ControlMode = ControlMode.SHIZUKU,  // 设备控制方式
+    val customSystemPrompt: String = "",  // 自定义系统提示词（为空时使用内置默认提示词）
+    val longTermMemory: String = ""  // 跨会话长期记忆（之前任务的指令与过程摘要）
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -224,7 +236,16 @@ class SettingsManager(context: Context) {
             maxSteps = prefs.getInt("max_steps", 25),
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
-            suCommandEnabled = prefs.getBoolean("su_command_enabled", false)
+            suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
+            controlMode = try {
+                ControlMode.valueOf(
+                    prefs.getString("control_mode", ControlMode.SHIZUKU.name) ?: ControlMode.SHIZUKU.name
+                )
+            } catch (e: Exception) {
+                ControlMode.SHIZUKU
+            },
+            customSystemPrompt = prefs.getString("custom_system_prompt", "") ?: "",
+            longTermMemory = prefs.getString("long_term_memory", "") ?: ""
         )
     }
 
@@ -355,5 +376,52 @@ class SettingsManager(context: Context) {
     fun updateSuCommandEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("su_command_enabled", enabled).apply()
         _settings.value = _settings.value.copy(suCommandEnabled = enabled)
+    }
+
+    fun updateControlMode(mode: ControlMode) {
+        prefs.edit().putString("control_mode", mode.name).apply()
+        _settings.value = _settings.value.copy(controlMode = mode)
+    }
+
+    fun updateCustomSystemPrompt(prompt: String) {
+        prefs.edit().putString("custom_system_prompt", prompt).apply()
+        _settings.value = _settings.value.copy(customSystemPrompt = prompt)
+    }
+
+    /**
+     * 追加一条长期记忆（任务结束后调用）。
+     * 攒到 8000 字即触发模型压缩（任务开始时执行：最新 10% 留原文，其余压成摘要）；
+     * 这里的 12000 字只是防止极端情况下无限增长的兜底硬顶。
+     */
+    fun appendLongTermMemory(entry: String) {
+        val trimmed = entry.trim()
+        if (trimmed.isEmpty()) {
+            return
+        }
+        val current = _settings.value.longTermMemory
+        var combined = if (current.isBlank()) trimmed else current + "\n\n" + trimmed
+        if (combined.length > 12000) {
+            combined = combined.takeLast(12000)
+            // 尽量从一条完整记忆的开头截断
+            val firstBreak = combined.indexOf("【任务】")
+            if (firstBreak > 0) {
+                combined = combined.substring(firstBreak)
+            }
+        }
+        prefs.edit().putString("long_term_memory", combined).apply()
+        _settings.value = _settings.value.copy(longTermMemory = combined)
+    }
+
+    fun clearLongTermMemory() {
+        prefs.edit().remove("long_term_memory").apply()
+        _settings.value = _settings.value.copy(longTermMemory = "")
+    }
+
+    /**
+     * 整体替换长期记忆（模型压缩后回写时使用）
+     */
+    fun updateLongTermMemory(text: String) {
+        prefs.edit().putString("long_term_memory", text).apply()
+        _settings.value = _settings.value.copy(longTermMemory = text)
     }
 }

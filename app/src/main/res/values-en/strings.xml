@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- App Name -->
-    <string name="app_name">Baozi</string>
+    <string name="app_name">伴语</string>
 
     <!-- Tab Titles -->
-    <string name="tab_home">Baozi</string>
+    <string name="tab_home">崩沙卡拉卡</string>
     <string name="tab_history">History</string>
     <string name="tab_settings">Settings</string>
 
@@ -157,4 +157,7 @@
     <string name="toast_sensitive_page">Detected sensitive page (payment/password), safely stopped</string>
     <string name="toast_max_steps">Reached maximum steps limit</string>
     <string name="toast_error">Error: %1$s</string>
+
+    <!-- Accessibility -->
+    <string name="accessibility_service_description">When enabled, the app can tap, swipe, go back, type text and take screenshots (Android 11+) through the accessibility service, as an alternative control method to Shizuku.</string>
 </resources>

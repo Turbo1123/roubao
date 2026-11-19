@@ -7,30 +7,30 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// 主色调
-val Primary = Color(0xFFD67744)
-val PrimaryDark = Color(0xFFB85E2E)
-val PrimaryLight = Color(0xFFE89060)
-val Secondary = Color(0xFFEFB773)
-val SecondaryDark = Color(0xFFD69B52)
-val SecondaryLight = Color(0xFFF5CB94)
+// 主色调（DeepSeek 蓝）
+val Primary = Color(0xFF4D6BFE)
+val PrimaryDark = Color(0xFF3A56D4)
+val PrimaryLight = Color(0xFF8CA3FF)
+val Secondary = Color(0xFFC7D3FE)
+val SecondaryDark = Color(0xFF8CA3FF)
+val SecondaryLight = Color(0xFFE4EAFF)
 
 // 深色主题背景色
-val BackgroundDark = Color(0xFF1A1A1A)
-val BackgroundCard = Color(0xFF252525)
-val BackgroundInput = Color(0xFF2A2A2A)
-val SurfaceVariant = Color(0xFF303030)
+val BackgroundDark = Color(0xFF0F0F0F)
+val BackgroundCard = Color(0xFF292929)
+val BackgroundInput = Color(0xFF242424)
+val SurfaceVariant = Color(0xFF363636)
 
 // 深色主题文字颜色
 val TextPrimary = Color(0xFFFFFFFF)
 val TextSecondary = Color(0xFFB0B0B0)
-val TextHint = Color(0xFF666666)
+val TextHint = Color(0xFF757575)
 
-// 浅色主题背景色 - 纯白简洁风格
+// 浅色主题背景色 - 纯白简洁风格（DeepSeek 式）
 val BackgroundLight = Color(0xFFFFFFFF)
-val BackgroundCardLight = Color(0xFFF5F5F5)
-val BackgroundInputLight = Color(0xFFEEEEEE)
-val SurfaceVariantLight = Color(0xFFE0E0E0)
+val BackgroundCardLight = Color(0xFFF7F7F8)
+val BackgroundInputLight = Color(0xFFF4F4F5)
+val SurfaceVariantLight = Color(0xFFEBEBEF)
 
 // 浅色主题文字颜色
 val TextPrimaryLight = Color(0xFF212121)

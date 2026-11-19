@@ -1,5 +1,8 @@
 package com.roubao.autopilot.ui.screens
 
+import android.content.Intent
+import android.provider.Settings as AndroidSettings
+import androidx.activity.ComponentActivity
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +19,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
@@ -34,15 +38,25 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
+import com.roubao.autopilot.controller.AccessibilityBridge
+import com.roubao.autopilot.controller.AdbBridge
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
+import com.roubao.autopilot.data.ControlMode
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
@@ -50,6 +64,7 @@ import com.roubao.autopilot.utils.CrashHandler
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
+    onBack: () -> Unit = {},
     onUpdateApiKey: (String) -> Unit,
     onUpdateBaseUrl: (String) -> Unit,
     onUpdateModel: (String) -> Unit,
@@ -59,6 +74,9 @@ fun SettingsScreen(
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
+    onUpdateControlMode: (ControlMode) -> Unit,
+    onUpdateCustomSystemPrompt: (String) -> Unit,
+    onClearLongTermMemory: () -> Unit,
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
@@ -74,38 +92,59 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
+    var showControlModeDialog by remember { mutableStateOf(false) }
+    var showSystemPromptDialog by remember { mutableStateOf(false) }
+    var showMemoryDialog by remember { mutableStateOf(false) }
+
+    // 无障碍服务开启状态（从系统设置返回时刷新）
+    val context = LocalContext.current
+    var accessibilityEnabled by remember { mutableStateOf(AccessibilityBridge.isEnabled(context)) }
+    DisposableEffect(context) {
+        val activity = context as? ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityEnabled = AccessibilityBridge.isEnabled(context)
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        // 顶部标题
+        // 顶部标题（居中 + 左侧圆形返回键，仿 DeepSeek 设置页）
         item {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Column {
-                    Text(
-                        text = "设置",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.primary
-                    )
-                    Text(
-                        text = "配置 API 和应用选项",
-                        fontSize = 14.sp,
-                        color = colors.textSecondary
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(colors.backgroundCard)
+                        .align(Alignment.CenterStart)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowLeft,
+                        contentDescription = "返回",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
+                Text(
+                    text = "设置",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
             }
-        }
-
-        // 连接状态卡片
-        item {
-            StatusCard(shizukuAvailable = shizukuAvailable)
         }
 
         // 外观设置分组
@@ -139,6 +178,61 @@ fun SettingsScreen(
                 title = "最大执行步数",
                 subtitle = "${settings.maxSteps} 步",
                 onClick = { showMaxStepsDialog = true }
+            )
+        }
+
+        // 控制方式设置
+        item {
+            SettingsItem(
+                icon = Icons.Default.Build,
+                title = "控制方式",
+                subtitle = when (settings.controlMode) {
+                    ControlMode.SHIZUKU -> "Shizuku"
+                    ControlMode.ACCESSIBILITY -> "无障碍"
+                    ControlMode.ADB -> "ADB（无线调试）"
+                },
+                onClick = { showControlModeDialog = true }
+            )
+        }
+
+        // 无障碍服务入口（无障碍模式时显示）
+        if (settings.controlMode == ControlMode.ACCESSIBILITY) {
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Settings,
+                    title = "无障碍服务",
+                    subtitle = if (accessibilityEnabled) "已开启" else "未开启，点击前往开启",
+                    onClick = {
+                        context.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                )
+            }
+        }
+
+        // ADB 连接管理（ADB 模式时显示）
+        if (settings.controlMode == ControlMode.ADB) {
+            item {
+                AdbSettingsCard()
+            }
+        }
+
+        // 系统提示词设置
+        item {
+            SettingsItem(
+                icon = Icons.Default.Info,
+                title = "系统提示词",
+                subtitle = if (settings.customSystemPrompt.isBlank()) "使用默认提示词" else "已自定义",
+                onClick = { showSystemPromptDialog = true }
+            )
+        }
+
+        // 长期记忆设置
+        item {
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "长期记忆",
+                subtitle = if (settings.longTermMemory.isBlank()) "暂无记录" else "已保存，角色会记住之前的互动",
+                onClick = { showMemoryDialog = true }
             )
         }
 
@@ -582,6 +676,42 @@ fun SettingsScreen(
         )
     }
 
+    // 控制方式选择对话框
+    if (showControlModeDialog) {
+        ControlModeDialog(
+            currentMode = settings.controlMode,
+            onDismiss = { showControlModeDialog = false },
+            onSelect = {
+                onUpdateControlMode(it)
+                showControlModeDialog = false
+            }
+        )
+    }
+
+    // 系统提示词编辑对话框
+    if (showSystemPromptDialog) {
+        SystemPromptDialog(
+            currentPrompt = settings.customSystemPrompt,
+            onDismiss = { showSystemPromptDialog = false },
+            onConfirm = {
+                onUpdateCustomSystemPrompt(it)
+                showSystemPromptDialog = false
+            }
+        )
+    }
+
+    // 长期记忆对话框
+    if (showMemoryDialog) {
+        LongTermMemoryDialog(
+            memory = settings.longTermMemory,
+            onDismiss = { showMemoryDialog = false },
+            onClear = {
+                onClearLongTermMemory()
+                showMemoryDialog = false
+            }
+        )
+    }
+
     // API Key 编辑对话框
     if (showApiKeyDialog) {
         ApiKeyDialog(
@@ -660,56 +790,13 @@ fun SettingsScreen(
 }
 
 @Composable
-fun StatusCard(shizukuAvailable: Boolean) {
-    val colors = BaoziTheme.colors
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (shizukuAvailable) colors.success.copy(alpha = 0.15f) else colors.error.copy(alpha = 0.15f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = if (shizukuAvailable) Icons.Default.CheckCircle else Icons.Default.Close,
-                contentDescription = null,
-                tint = if (shizukuAvailable) colors.success else colors.error,
-                modifier = Modifier.size(32.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
-                Text(
-                    text = if (shizukuAvailable) "Shizuku 已连接" else "Shizuku 未连接",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (shizukuAvailable) colors.success else colors.error
-                )
-                Text(
-                    text = if (shizukuAvailable) "设备控制功能可用" else "请启动 Shizuku 并授权",
-                    fontSize = 13.sp,
-                    color = colors.textSecondary
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun SettingsSection(title: String) {
     val colors = BaoziTheme.colors
     Text(
         text = title,
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Medium,
-        color = colors.primary,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+        fontSize = 13.sp,
+        color = colors.textSecondary,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 8.dp)
     )
 }
 
@@ -725,46 +812,39 @@ fun SettingsItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .padding(horizontal = 16.dp, vertical = 3.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.primary.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = colors.primary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.textPrimary
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 13.sp,
-                    color = colors.textSecondary,
-                    maxLines = 1
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.textPrimary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(14.dp))
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                color = colors.textPrimary
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = subtitle,
+                fontSize = 14.sp,
+                color = colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 140.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
             if (trailing != null) {
                 trailing()
             } else {
@@ -1506,7 +1586,7 @@ fun MaxStepsDialog(
         text = {
             Column {
                 Text(
-                    text = "设置 Agent 单次任务的最大执行步数。步数越多，能完成的任务越复杂，但消耗的 token 也越多。",
+                    text = "设置 Agent 单次任务的最大执行步数。步数越多，能完成的任务越复杂、会话越长，但消耗的 token 也越多。",
                     fontSize = 14.sp,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -1528,8 +1608,8 @@ fun MaxStepsDialog(
                 Slider(
                     value = steps,
                     onValueChange = { steps = it },
-                    valueRange = 5f..100f,
-                    steps = 18, // (100-5)/5 - 1 = 18 个刻度点，每 5 步一个
+                    valueRange = 5f..300f,
+                    steps = 58, // (300-5)/5 - 1 = 58 个刻度点，每 5 步一个
                     colors = SliderDefaults.colors(
                         thumbColor = colors.primary,
                         activeTrackColor = colors.primary,
@@ -1549,7 +1629,7 @@ fun MaxStepsDialog(
                         color = colors.textHint
                     )
                     Text(
-                        text = "100",
+                        text = "300",
                         fontSize = 12.sp,
                         color = colors.textHint
                     )
@@ -1562,7 +1642,7 @@ fun MaxStepsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(15, 25, 50).forEach { preset ->
+                    listOf(25, 50, 100, 200).forEach { preset ->
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -1869,4 +1949,325 @@ fun SuCommandWarningDialog(
             }
         }
     )
+}
+
+@Composable
+fun ControlModeDialog(
+    currentMode: ControlMode,
+    onDismiss: () -> Unit,
+    onSelect: (ControlMode) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("选择控制方式", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                listOf(
+                    ControlMode.SHIZUKU to "Shizuku",
+                    ControlMode.ACCESSIBILITY to "无障碍",
+                    ControlMode.ADB to "ADB（无线调试）"
+                ).forEach { (mode, label) ->
+                    val isSelected = mode == currentMode
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { onSelect(mode) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .border(2.dp, colors.textHint, CircleShape)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = label,
+                                fontSize = 14.sp,
+                                color = if (isSelected) colors.primary else colors.textPrimary
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Shizuku 模式通过 Shizuku 执行 shell 命令；无障碍模式通过无障碍服务执行点击、滑动、返回、输入与截图（截图需 Android 11+），无需 Shizuku；ADB 模式通过无线调试直连本机 ADB 执行 shell 命令，首次使用需配对一次（见下方的 ADB 设置）。无障碍服务开启时，任意模式下都可使用元素序号点选。",
+                    fontSize = 13.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+fun SystemPromptDialog(
+    currentPrompt: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var prompt by remember { mutableStateOf(currentPrompt) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("系统提示词", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "在这里填写角色设定或系统提示词，Agent 会以这个角色的身份操控手机执行任务，并作为最高优先级指令加入每次任务。留空则使用默认提示词。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    BasicTextField(
+                        value = prompt,
+                        onValueChange = { prompt = it },
+                        textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 240.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp)
+                    )
+                }
+                TextButton(onClick = { prompt = "" }) {
+                    Text("恢复默认", fontSize = 13.sp, color = colors.textHint)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(prompt.trim()) }) {
+                Text("保存", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+fun LongTermMemoryDialog(
+    memory: String,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit
+) {
+    val colors = BaoziTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("长期记忆", color = colors.textPrimary)
+        },
+        text = {
+            Text(
+                text = if (memory.isBlank()) {
+                    "暂无记录。每次任务结束后，任务指令、结果和关键过程会自动记入长期记忆，下次任务时带入上下文，让角色记得你们之前的互动。记忆写满后会自动用模型压缩：最新约 10% 保留原文，其余压成摘要。"
+                } else {
+                    "已保存约 ${memory.length} 字的互动记忆，下次任务时会自动带入上下文。记忆攒到 8000 字后会自动用模型压缩：其中最新 10% 保留原文，其余压成摘要，重要的事不会丢。清除后角色将不再记得之前的互动。"
+                },
+                fontSize = 14.sp,
+                color = colors.textSecondary
+            )
+        },
+        confirmButton = {
+            if (memory.isNotBlank()) {
+                TextButton(onClick = onClear) {
+                    Text("清除记忆", color = colors.error)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+/**
+ * ADB（无线调试）设置卡片：首次配对、连接/断开与状态显示。
+ * 配对只需一次：开发者选项 → 无线调试 → 使用配对码配对设备，把端口和配对码填进来。
+ * 配对后点连接即可（端口自动搜索；失败时填无线调试主页的连接端口再连）。
+ */
+@Composable
+fun AdbSettingsCard() {
+    val colors = BaoziTheme.colors
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var connected by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+    var pairPort by remember { mutableStateOf("") }
+    var pairCode by remember { mutableStateOf("") }
+    var connectPort by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        AdbBridge.init(context)
+        connected = withContext(Dispatchers.IO) { AdbBridge.isConnected() }
+    }
+
+    fun runAction(okMsg: String, failMsg: String, action: () -> Boolean) {
+        if (busy) return
+        busy = true
+        message = "处理中…"
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { action() }
+            connected = withContext(Dispatchers.IO) { AdbBridge.isConnected() }
+            message = if (ok) okMsg else failMsg
+            busy = false
+        }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(if (connected) Color(0xFF2FBF71) else colors.textHint)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (connected) "ADB 已连接" else "ADB 未连接",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textPrimary
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "使用前：打开「开发者选项 → 无线调试」。点「使用配对码配对设备」，把弹窗里的端口和 6 位配对码填到下面配对（只需一次）；之后点「连接」即可，任务开始时也会自动重连。需要 Android 11 及以上。",
+                fontSize = 13.sp,
+                color = colors.textSecondary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = pairPort,
+                onValueChange = { pairPort = it.filter { ch -> ch.isDigit() }.take(5) },
+                label = { Text("配对端口") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = pairCode,
+                onValueChange = { pairCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                label = { Text("配对码（6 位）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    val port = pairPort.toIntOrNull()
+                    if (port == null || pairCode.length != 6) {
+                        message = "请先填好配对端口和 6 位配对码"
+                    } else {
+                        runAction("配对成功，点下面的连接就能用了", "配对失败：确认无线调试已打开、端口和配对码没填错（弹窗关掉就要重新打开）") {
+                            AdbBridge.pair(port, pairCode)
+                        }
+                    }
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("配对")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = connectPort,
+                onValueChange = { connectPort = it.filter { ch -> ch.isDigit() }.take(5) },
+                label = { Text("连接端口（可留空，自动搜索）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = {
+                        val port = connectPort.toIntOrNull()
+                        if (port != null) {
+                            runAction("已连接", "连接失败：确认无线调试开着、端口填的是无线调试主页的端口") {
+                                AdbBridge.connect(port)
+                            }
+                        } else {
+                            runAction("已连接", "自动搜索连接失败：把无线调试主页的端口填进来再连") {
+                                AdbBridge.connectNow(20000)
+                            }
+                        }
+                    },
+                    enabled = !busy && !connected,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("连接")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        runAction("已断开", "已断开") {
+                            AdbBridge.disconnect()
+                            true
+                        }
+                    },
+                    enabled = !busy && connected,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("断开")
+                }
+            }
+            if (message.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            }
+        }
+    }
 }

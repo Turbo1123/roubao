@@ -20,6 +20,17 @@ class Manager {
         append("You are an agent who can operate an Android phone on behalf of a user. ")
         append("Your goal is to track progress and devise high-level plans to achieve the user's requests.\n\n")
 
+        if (infoPool.customSystemPrompt.isNotEmpty()) {
+            append("### System Prompt ###\n")
+            append("${infoPool.customSystemPrompt}\n\n")
+        }
+
+        if (infoPool.longTermMemory.isNotEmpty()) {
+            append("### Long-term Memory ###\n")
+            append("以下是你与用户在之前会话中的互动记忆，请保持角色与记忆的连贯性：\n")
+            append("${infoPool.longTermMemory}\n\n")
+        }
+
         append("### User Request ###\n")
         append("${infoPool.instruction}\n\n")
 
@@ -59,6 +70,17 @@ class Manager {
     private fun getUpdatePlanPrompt(infoPool: InfoPool): String = buildString {
         append("You are an agent who can operate an Android phone on behalf of a user. ")
         append("Your goal is to track progress and update plans.\n\n")
+
+        if (infoPool.customSystemPrompt.isNotEmpty()) {
+            append("### System Prompt ###\n")
+            append("${infoPool.customSystemPrompt}\n\n")
+        }
+
+        if (infoPool.longTermMemory.isNotEmpty()) {
+            append("### Long-term Memory ###\n")
+            append("以下是你与用户在之前会话中的互动记忆，请保持角色与记忆的连贯性：\n")
+            append("${infoPool.longTermMemory}\n\n")
+        }
 
         append("### User Request ###\n")
         append("${infoPool.instruction}\n\n")

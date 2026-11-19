@@ -27,9 +27,11 @@ import androidx.lifecycle.lifecycleScope
 import android.net.Uri
 import android.provider.Settings
 import com.roubao.autopilot.agent.MobileAgent
+import com.roubao.autopilot.controller.AccessibilityBridge
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.*
+import com.roubao.autopilot.ui.SwarmLaunchAnimation
 import com.roubao.autopilot.ui.screens.*
 import com.roubao.autopilot.ui.theme.*
 import androidx.compose.ui.graphics.toArgb
@@ -45,11 +47,15 @@ import android.util.Log
 private const val TAG = "MainActivity"
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector, val selectedIcon: ImageVector) {
-    object Home : Screen("home", "肉包", Icons.Outlined.Home, Icons.Filled.Home)
+    object Chat : Screen("chat", "对话", Icons.Outlined.Person, Icons.Filled.Person)
+    object Home : Screen("home", "操控", Icons.Outlined.Home, Icons.Filled.Home)
     object Capabilities : Screen("capabilities", "能力", Icons.Outlined.Star, Icons.Filled.Star)
     object History : Screen("history", "记录", Icons.Outlined.List, Icons.Filled.List)
     object Settings : Screen("settings", "设置", Icons.Outlined.Settings, Icons.Filled.Settings)
 }
+
+// 冷启动动画是否已在本进程播放过（每次启动 App 只播一次）
+private var launchAnimShown = false
 
 class MainActivity : ComponentActivity() {
 
@@ -164,10 +170,12 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun MainApp() {
-        var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+        var currentScreen by remember { mutableStateOf<Screen>(Screen.Chat) }
+        var showLaunchAnim by remember { mutableStateOf(!launchAnimShown) }
+        if (showLaunchAnim) {
+            SideEffect { launchAnimShown = true }
+        }
         var selectedRecord by remember { mutableStateOf<ExecutionRecord?>(null) }
-        var showShizukuHelpDialog by remember { mutableStateOf(false) }
-        var hasShownShizukuHelp by remember { mutableStateOf(false) }
 
         val settings by settingsManager.settings.collectAsState()
         val colors = BaoziTheme.colors
@@ -193,48 +201,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 首次进入且 Shizuku 未连接时，显示帮助引导（只显示一次）
-        LaunchedEffect(Unit) {
-            if (!isShizukuAvailable && settings.hasSeenOnboarding && !hasShownShizukuHelp) {
-                hasShownShizukuHelp = true
-                showShizukuHelpDialog = true
-            }
-        }
-
         Scaffold(
             modifier = Modifier.background(colors.background),
             containerColor = colors.background,
-            bottomBar = {
-                if (selectedRecord == null) {
-                    NavigationBar(
-                        containerColor = colors.background,
-                        contentColor = colors.textPrimary,
-                        tonalElevation = 0.dp
-                    ) {
-                        listOf(Screen.Home, Screen.Capabilities, Screen.History, Screen.Settings).forEach { screen ->
-                            val selected = currentScreen == screen
-                            NavigationBarItem(
-                                icon = {
-                                    Icon(
-                                        imageVector = if (selected) screen.selectedIcon else screen.icon,
-                                        contentDescription = screen.title
-                                    )
-                                },
-                                label = { Text(screen.title) },
-                                selected = selected,
-                                onClick = { currentScreen = screen },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = if (colors.isDark) colors.textPrimary else Color.White,
-                                    selectedTextColor = colors.primary,
-                                    unselectedIconColor = colors.textSecondary,
-                                    unselectedTextColor = colors.textSecondary,
-                                    indicatorColor = colors.primary
-                                )
-                            )
-                        }
-                    }
-                }
-            }
         ) { padding ->
             Box(
                 modifier = Modifier
@@ -244,6 +213,9 @@ class MainActivity : ComponentActivity() {
                 // 处理系统返回手势
                 BackHandler(enabled = selectedRecord != null) {
                     selectedRecord = null
+                }
+                BackHandler(enabled = selectedRecord == null && currentScreen != Screen.Chat) {
+                    currentScreen = Screen.Chat
                 }
 
                 // 详情页优先显示
@@ -262,6 +234,24 @@ class MainActivity : ComponentActivity() {
                         label = "screen"
                     ) { screen ->
                         when (screen) {
+                            Screen.Chat -> {
+                                ChatScreen(
+                                    settings = settings,
+                                    onControlRequest = { instruction, onResult ->
+                                        runAgent(
+                                            instruction = instruction,
+                                            apiKey = settings.apiKey,
+                                            baseUrl = settings.baseUrl,
+                                            model = settings.model,
+                                            maxSteps = settings.maxSteps,
+                                            isGUIAgent = settings.currentProvider.isGUIAgent,
+                                            providerId = settings.currentProviderId,
+                                            onControlResult = onResult
+                                        )
+                                    },
+                                    onOpenSettings = { currentScreen = Screen.Settings }
+                                )
+                            }
                             Screen.Home -> {
                                 // 每次进入首页都检测 Shizuku 状态
                                 LaunchedEffect(Unit) {
@@ -285,9 +275,11 @@ class MainActivity : ComponentActivity() {
                                         mobileAgent.value?.stop()
                                     },
                                     shizukuAvailable = isShizukuAvailable,
+                                    accessibilityReady = settings.controlMode == ControlMode.ACCESSIBILITY &&
+                                        (AccessibilityBridge.isConnected() || AccessibilityBridge.isEnabled(this@MainActivity)),
                                     currentModel = settings.model,
                                     onRefreshShizuku = { refreshShizukuStatus() },
-                                    onShizukuRequired = { showShizukuHelpDialog = true },
+                                    onShizukuRequired = { },
                                     isExecuting = executing
                                 )
                             }
@@ -299,6 +291,7 @@ class MainActivity : ComponentActivity() {
                             )
                             Screen.Settings -> SettingsScreen(
                                 settings = settings,
+                                onBack = { currentScreen = Screen.Chat },
                                 onUpdateApiKey = { settingsManager.updateApiKey(it) },
                                 onUpdateBaseUrl = { settingsManager.updateBaseUrl(it) },
                                 onUpdateModel = { settingsManager.updateModel(it) },
@@ -311,6 +304,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
+                                onUpdateControlMode = { settingsManager.updateControlMode(it) },
+                                onUpdateCustomSystemPrompt = { settingsManager.updateCustomSystemPrompt(it) },
+                                onClearLongTermMemory = { settingsManager.clearLongTermMemory() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
@@ -334,13 +330,17 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+
+                // 冷启动 swarm 光标动画（每次启动只播一次，点击跳过）
+                if (showLaunchAnim) {
+                    SwarmLaunchAnimation(
+                        darkTheme = colors.isDark,
+                        onFinished = { showLaunchAnim = false }
+                    )
+                }
             }
         }
 
-        // Shizuku 帮助对话框
-        if (showShizukuHelpDialog) {
-            ShizukuHelpDialog(onDismiss = { showShizukuHelpDialog = false })
-        }
     }
 
     private fun deleteRecord(id: String) {
@@ -443,16 +443,19 @@ class MainActivity : ComponentActivity() {
         model: String,
         maxSteps: Int,
         isGUIAgent: Boolean = false,
-        providerId: String = ""
+        providerId: String = "",
+        onControlResult: ((Boolean, String) -> Unit)? = null
     ) {
         if (instruction.isBlank()) {
             Toast.makeText(this, "请输入指令", Toast.LENGTH_SHORT).show()
+            onControlResult?.invoke(false, "指令为空")
             return
         }
         // MAI-UI 本地部署不需要 API Key
         val requiresApiKey = providerId != "mai_ui"
         if (requiresApiKey && apiKey.isBlank()) {
             Toast.makeText(this, "请输入 API Key", Toast.LENGTH_SHORT).show()
+            onControlResult?.invoke(false, "未配置 API Key")
             return
         }
 
@@ -464,6 +467,7 @@ class MainActivity : ComponentActivity() {
                 Uri.parse("package:$packageName")
             )
             startActivity(intent)
+            onControlResult?.invoke(false, "需要先授予悬浮窗权限才能操控手机")
             return
         }
 
@@ -548,6 +552,19 @@ class MainActivity : ComponentActivity() {
                 executionRepository.saveRecord(updatedRecord)
                 executionRecords.value = executionRepository.getAllRecords()
 
+                // 写入跨会话长期记忆，供后续任务保持角色与记忆连贯（长上下文）
+                val memoryEntry = buildString {
+                    append("【任务】").append(instruction).append('\n')
+                    append("【结果】").append(result.message).append('\n')
+                    val descs = steps.mapNotNull { it.description.takeIf { d -> d.isNotBlank() } }.takeLast(8)
+                    if (descs.isNotEmpty()) {
+                        append("【过程】").append(descs.joinToString("；"))
+                    }
+                }
+                settingsManager.appendLongTermMemory(memoryEntry)
+
+                onControlResult?.invoke(result.success, result.message)
+
                 Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_LONG).show()
 
                 // 重置执行状态
@@ -578,6 +595,8 @@ class MainActivity : ComponentActivity() {
                     // 重置执行状态
                     isExecuting.value = false
 
+                    onControlResult?.invoke(false, "操作已取消")
+
                     Toast.makeText(this@MainActivity, "任务已停止", Toast.LENGTH_SHORT).show()
                     mobileAgent.value?.clearLogs()
 
@@ -598,6 +617,8 @@ class MainActivity : ComponentActivity() {
 
                 // 重置执行状态
                 isExecuting.value = false
+
+                onControlResult?.invoke(false, "错误: ${e.message}")
 
                 Toast.makeText(this@MainActivity, "错误: ${e.message}", Toast.LENGTH_LONG).show()
 

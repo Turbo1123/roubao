@@ -63,6 +63,7 @@ fun HomeScreen(
     onExecute: (String) -> Unit,
     onStop: () -> Unit,
     shizukuAvailable: Boolean,
+    accessibilityReady: Boolean = false,
     currentModel: String = "",
     onRefreshShizuku: () -> Unit = {},
     onShizukuRequired: () -> Unit = {},
@@ -70,6 +71,8 @@ fun HomeScreen(
 ) {
     val colors = BaoziTheme.colors
     var inputText by remember { mutableStateOf("") }
+    // Shizuku 或无障碍任意一种可用即可执行
+    val canExecute = shizukuAvailable || accessibilityReady
     // 使用 isExecuting 或 agentState?.isRunning 来判断是否运行中
     val isRunning = isExecuting || agentState?.isRunning == true
     val listState = rememberLazyListState()
@@ -114,15 +117,19 @@ fun HomeScreen(
             ) {
                 Column {
                     Text(
-                        text = "肉包",
+                        text = "伴语",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         color = colors.primary
                     )
                     Text(
-                        text = if (shizukuAvailable) "准备就绪，告诉我你想做什么" else "请先连接 Shizuku",
+                        text = when {
+                            shizukuAvailable -> "准备就绪，告诉我你想做什么"
+                            accessibilityReady -> "准备就绪（无障碍模式），告诉我你想做什么"
+                            else -> "请先连接 Shizuku 或开启无障碍"
+                        },
                         fontSize = 14.sp,
-                        color = if (shizukuAvailable) colors.textSecondary else colors.error
+                        color = if (canExecute) colors.textSecondary else colors.error
                     )
                 }
 
@@ -164,7 +171,7 @@ fun HomeScreen(
                 // 空闲时显示预设命令
                 PresetCommandsView(
                     onCommandClick = { command ->
-                        if (shizukuAvailable) {
+                        if (canExecute) {
                             inputText = command
                         } else {
                             onShizukuRequired()
@@ -193,9 +200,9 @@ fun HomeScreen(
                 onStop()
             },
             isRunning = isRunning,
-            enabled = shizukuAvailable,
+            enabled = canExecute,
             onInputClick = {
-                if (!shizukuAvailable) {
+                if (!canExecute) {
                     onShizukuRequired()
                 }
             }
@@ -511,7 +518,7 @@ fun InputArea(
                                 Box {
                                     if (inputText.isEmpty()) {
                                         Text(
-                                            text = "告诉肉包你想做什么...",
+                                            text = "告诉伴语你想做什么...",
                                             color = colors.textHint,
                                             fontSize = 15.sp
                                         )
@@ -521,9 +528,9 @@ fun InputArea(
                             }
                         )
                     } else {
-                        // Shizuku 未连接，显示提示文字
+                        // 控制方式未就绪，显示提示文字
                         Text(
-                            text = "请先连接 Shizuku",
+                            text = "请先连接 Shizuku 或开启无障碍",
                             color = colors.textHint,
                             fontSize = 15.sp
                         )
